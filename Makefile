@@ -31,7 +31,7 @@ deps-issuer:                ## Build unidpp-issuer when its source is present.
 	@if [ -d ../unidpp-issuer/src ] && [ -n "$$(ls -A ../unidpp-issuer/src 2>/dev/null)" ]; then \
 		cargo build --release --manifest-path ../unidpp-issuer/Cargo.toml; \
 	else \
-		echo "unidpp-issuer source not yet present (TODO #10); skipping build."; \
+		echo "unidpp-issuer source not yet present ; skipping build."; \
 	fi
 
 up:                         ## Start the registry in the background (compose).

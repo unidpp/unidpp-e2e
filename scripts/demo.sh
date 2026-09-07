@@ -2,18 +2,18 @@
 # demo.sh — the UniDPP end-to-end story: the Momiji Mobility E8 walks
 # the ten STORY.md beats against real services and real artifacts.
 #
-# Source of truth: ~/src/isoiecjtc5/exemplar/STORY.md (B1-B10).
+# Source of truth: the UniDPP E8 exemplar story (beats B1–B10).
 # Every beat is labeled with its STORY number and a one-line "what just
 # happened". Any command that does not produce its expected outcome
 # aborts the run with a non-zero exit; every `unidpp verify` result is
 # asserted against the beat's expected verdict (pass / degraded / fail)
 # — an unexpected verify outcome fails the demo.
 #
-# Services: unidpp-registry (../unidpp-registry, TODO #12) is started
+# Services: unidpp-registry (../unidpp-registry, ) is started
 # locally and seeded with the story's profile applicability bindings.
 # Issuance goes through scripts/issuer-hook.sh — today driven by the
-# unidpp-cli (TODO #11), automatically switching to the unidpp-issuer
-# service (TODO #10) once its binary exists (see that file).
+# unidpp-cli , automatically switching to the unidpp-issuer
+# service  once its binary exists (see that file).
 
 set -u
 set -o pipefail
@@ -192,7 +192,7 @@ start_registry() {
         sleep 0.2
     done
     [ "$registry_ready" = 1 ] || fail "registry did not become healthy on $REGISTRY_URL"
-    say "unidpp-registry healthy at $REGISTRY_URL (19135 item service, TODO #12)"
+    say "unidpp-registry healthy at $REGISTRY_URL (19135 item service, )"
 }
 
 stop_registry() {
@@ -283,7 +283,7 @@ decompose_data() {
         "$SCRAP_URN" "$RECYCLE_URN"
 }
 
-# Registry seed bodies (TODO #12 wire shapes).
+# Registry seed bodies ( wire shapes).
 reg_transform_body() {
     printf '{"register_id":"unidpp-e2e","item_id":"gb4943-1-2022-eq-iec-62368-1","class":"transform","definition":"GB 4943.1-2022 ~= IEC 62368-1 certificate equivalence (attester: cqc)","version":"1.0.0"}'
 }
@@ -346,16 +346,16 @@ main() {
 
     hr "UniDPP end-to-end — the Momiji Mobility E8 (STORY.md beats B1-B10)"
     say "run:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    say "story:    the E8 cast and beats of ~/src/isoiecjtc5/exemplar/STORY.md"
+    say "story:    UniDPP E8 exemplar (beats B1-B10)"
     say "artifacts: $WORK_DIR"
 
     . "$SCRIPT_DIR/issuer-hook.sh"
 
     issuer_driver="$(detect_issuer_mode)"
     if [ "$issuer_driver" = issuer ]; then
-        say "issuance: unidpp-issuer service (TODO #10) at $ISSUER_URL"
+        say "issuance: unidpp-issuer service  at $ISSUER_URL"
     else
-        say "issuance: unidpp-cli (TODO #11) — the unidpp-issuer service binary is"
+        say "issuance: unidpp-cli  — the unidpp-issuer service binary is"
         say "not present yet; scripts/issuer-hook.sh switches to it automatically"
     fi
 

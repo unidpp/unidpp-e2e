@@ -1,11 +1,11 @@
 # unidpp-e2e
 
-The public, end-to-end demonstration orchestrator — **the JTC 5 showpiece**.
-Walks the [Momiji Mobility E8](../../isoiecjtc5/exemplar/STORY.md) story
+The public, end-to-end demonstration orchestrator — **the public end-to-end demonstration**.
+Walks the [Momiji Mobility E8](../../the UniDPP E8 exemplar story) story
 beats (B1–B10) against the running registry, signed Tier-A packs, and the
 offline verifier. Exits non-zero on any unexpected verify outcome.
 
-Source of truth: [`isoiecjtc5/exemplar/STORY.md`](../../isoiecjtc5/exemplar/STORY.md).
+Source of truth: [`the UniDPP E8 exemplar story`](../../the UniDPP E8 exemplar story).
 This repo runs the story; it does not document it.
 
 ## What runs end-to-end today
@@ -14,39 +14,39 @@ This repo runs the story; it does not document it.
 $ make demo
 
 UniDPP end-to-end — the Momiji Mobility E8 (STORY.md beats B1-B10)
-    run: 2026-09-07T07:59:18Z
-    issuance: unidpp-cli (TODO #11) — the unidpp-issuer service binary is
-    not present yet; scripts/issuer-hook.sh switches to it automatically
+ run: 2026-09-07T07:59:18Z
+ issuance: unidpp-cli — the unidpp-issuer service binary is
+ not present yet; scripts/issuer-hook.sh switches to it automatically
 
 [orchestrator] starting unidpp-registry on 127.0.0.1:8098
-    unidpp-registry healthy at http://127.0.0.1:8098 (19135 item service, TODO #12)
+ unidpp-registry healthy at http://127.0.0.1:8098 (19135 item service, )
 
 ======================================================================
 B1 — Assembly in Kyoto (issuance where duty attaches)
 ----------------------------------------------------------------------
-    what just happened: the JP type passport and the instance passport
-    exist, and the build record lists every part at finest recorded
-    granularity.
-  $ unidpp create --id local:momiji:e8/type/2027.1 --capability S0 --eo momiji-mobility \
-                   --passport-id urn:unidpp:passport:momiji-e8-type-2027-1 --out e8-type.json --resolver …
-  $ unidpp create --id local:momiji:e8/J-000842 --type momiji:e8/type/2027.1 --capability S2 ...
-  $ unidpp create --id local:rhine:du/M-771233 --capability S1 ...
-  $ unidpp create --id local:weilian:wp/P-9904  --capability S2 ...
-  $ unidpp create --id local:haichuan:cell/H-2231 --capability S0 ...
-  $ unidpp event … --type issuance --data {"derived":false,"inputs":[]} …
+ what just happened: the JP type passport and the instance passport
+ exist, and the build record lists every part at finest recorded
+ granularity.
+ $ unidpp create --id local:momiji:e8/type/2027.1 --capability S0 --eo momiji-mobility \
+ --passport-id urn:unidpp:passport:momiji-e8-type-2027-1 --out e8-type.json --resolver …
+ $ unidpp create --id local:momiji:e8/J-000842 --type momiji:e8/type/2027.1 --capability S2 ...
+ $ unidpp create --id local:rhine:du/M-771233 --capability S1 ...
+ $ unidpp create --id local:weilian:wp/P-9904 --capability S2 ...
+ $ unidpp create --id local:haichuan:cell/H-2231 --capability S0 ...
+ $ unidpp event … --type issuance --data {"derived":false,"inputs":[]} …
 
 …
 ======================================================================
 B10 — End of life (the material loop closes)
 ----------------------------------------------------------------------
-    out:  21.4 kg  ->  urn:unidpp:passport:scrap-steel-j000842
-    out:   4.3 kg  ->  urn:unidpp:passport:recycle-pack-j000842
-    in :  25.9 kg  (declared mass)
-    loss = in - out = 0.2 kg  (auditable)
+ out: 21.4 kg -> urn:unidpp:passport:scrap-steel-j000842
+ out: 4.3 kg -> urn:unidpp:passport:recycle-pack-j000842
+ in : 25.9 kg (declared mass)
+ loss = in - out = 0.2 kg (auditable)
 
 STORY COMPLETE — B1 through B10
-    checks:   10/10 passed
-    artifacts: build/e2e (passports, packs, registry responses)
+ checks: 10/10 passed
+ artifacts: build/e2e (passports, packs, registry responses)
 DEMO PASSED — all verify outcomes matched the story.
 ```
 
@@ -75,13 +75,13 @@ The full annotated transcript is in `build/e2e/transcript.txt`.
 
 ```
 unidpp-e2e/
-├── Makefile                demo | test | deps | up (compose) | down | clean
-├── docker-compose.yml     optional: registry + (profile=issuer) issuer
+├── Makefile demo | test | deps | up (compose) | down | clean
+├── docker-compose.yml optional: registry + (profile=issuer) issuer
 ├── scripts/
-│   ├── demo.sh             the orchestrator (~700 lines, shellcheck-clean)
-│   └── issuer-hook.sh      SINGLE clearly-marked issuer integration point
+│ ├── demo.sh the orchestrator (~700 lines, shellcheck-clean)
+│ └── issuer-hook.sh SINGLE clearly-marked issuer integration point
 └── tests/
-    └── run_tests.sh        the shell test harness (4 tests)
+ └── run_tests.sh the shell test harness (4 tests)
 ```
 
 The sibling repos (`../unidpp-registry`, `../unidpp-cli`,
@@ -107,7 +107,7 @@ Useful environment variables:
 |---|---|---|
 | `UNIDPP_REGISTRY_URL` | `http://127.0.0.1:8098` | external registry (skips the local start) |
 | `UNIDPP_REGISTRY_BIND` | `127.0.0.1:8098` | bind address when starting locally |
-| `UNIDPP_ISSUER_URL` | unset | activates the `unidpp-issuer` service mode (TODO #10) |
+| `UNIDPP_ISSUER_URL` | unset | activates the `unidpp-issuer` service mode |
 | `UNIDPP_ISSUER_BIND` | `127.0.0.1:8096` | issuer bind address when starting locally |
 | `UNIDPP_ISSUER_ADMIN_TOKEN` | unset (open) | bearer token sent to the issuer when set |
 | `UNIDPP_E2E_WORK_DIR` | `build/e2e` | where artifacts land |
@@ -120,16 +120,16 @@ make demo UNIDPP_REGISTRY_URL=http://localhost:8098
 
 docker compose --profile issuer up -d
 make demo UNIDPP_REGISTRY_URL=http://localhost:8098 \
-            UNIDPP_ISSUER_URL=http://localhost:8096
+ UNIDPP_ISSUER_URL=http://localhost:8096
 ```
 
 ## Integration status — what waits on the issuer binary
 
 | Piece | Source | Status |
 |---|---|---|
-| `unidpp-registry` (TODO #12) | `../unidpp-registry` | **RUNNING locally today.** Axum service, 19135 items + 6 subregisters, JSONL journal, 17 unit + 7 integration tests. |
-| `unidpp-cli` (TODO #11) | `../unidpp-cli` | **RUNNING locally today** (the default driver). Real ECDSA-P256 pack signatures, 50 unit + 14 integration tests. |
-| `unidpp-issuer` (TODO #10) | `../unidpp-issuer` | **In flight (parallel agent) — and already integrated.** The hook at `scripts/issuer-hook.sh` speaks its JSON wire protocol (POST `/passports`, `/passports/{id}/events`, `/pack`) and was verified green against the in-tree debug binary: `UNIDPP_ISSUER_URL=http://…:8096 make demo` runs the full story with server-signed events (TrustMarker::Attested) and server-minted packs; re-runs against a stateful issuer journal hit the 409 fallback (identity never re-minted, I1). |
+| `unidpp-registry` | `../unidpp-registry` | Available. Axum service, 19135 items + 6 subregisters, JSONL journal, 17 unit + 7 integration tests. |
+| `unidpp-cli` | `../unidpp-cli` | Available (default driver). Real ECDSA-P256 pack signatures, 50 unit + 14 integration tests. |
+| `unidpp-issuer` | `../unidpp-issuer` | Optional. When `UNIDPP_ISSUER_URL` is set, events and packs are issued via the HTTP API. |
 | `unidpp-trust`, `unidpp-resolver`, `unidpp-py`, … | sibling repos | not in scope for the demo. |
 
 The `scripts/issuer-hook.sh` file is the **single, clearly-marked issuer
@@ -145,27 +145,27 @@ documents after each call). Nothing else in the orchestrator changes.
 `make test` runs four checks against a freshly-built demo:
 
 1. **Happy path.** The E8 demo runs end-to-end; the transcript contains
-   every STORY beat label B1–B10 and the story-expected verify outcomes.
+ every STORY beat label B1–B10 and the story-expected verify outcomes.
 2. **Tamper detection.** Flipping a byte in the signed Tier-A pack makes
-   `unidpp verify` return **FAIL** (exit 2) — the cryptographic pipeline
-   caught the tamper.
+ `unidpp verify` return **FAIL** (exit 2) — the cryptographic pipeline
+ caught the tamper.
 3. **Missing anchor.** Verifying without `--anchor` degrades (exit 1),
-   never silently PASSes.
+ never silently PASSes.
 4. **Registry dated binding.** EU profile applicability is empty before
-   2028-02-01 and non-empty after — the dated-binding machinery.
+ 2028-02-01 and non-empty after — the dated-binding machinery.
 
 ## Conventions
 
 - The orchestrator is **shellcheck-clean** under `bash 3.2+` (macOS
-  default), `set -u` + `set -o pipefail` + `set -o nounset`, no
-  associative arrays or `mapfile`.
+ default), `set -u` + `set -o pipefail` + `set -o nounset`, no
+ associative arrays or `mapfile`.
 - No `jq` dependency: JSON is read with `python3` (always present in
-  the family toolchain).
+ the family toolchain).
 - Exit codes mirror the CLI: `0 = pass`, `1 = degraded`, `2 = fail`,
-  `3 = usage`. Unexpected verify outcomes fail the demo loudly rather
-  than fabricating a pass.
+ `3 = usage`. Unexpected verify outcomes fail the demo loudly rather
+ than fabricating a pass.
 - Artifacts land in `build/e2e/`. The transcript doubles as the human
-  narration and the assertion target (ANSI-stripped by the test harness).
+ narration and the assertion target (ANSI-stripped by the test harness).
 
 ## License
 

@@ -1,8 +1,8 @@
 # Optional compose: build the sibling Rust services inside their own
 # directories. The `registry` profile is the default; the `issuer`
 # profile is activated by `docker compose --profile issuer up`. Until
-# each sibling repo ships its own Dockerfile (TODO #17 hygiene for
-# `unidpp-registry`; `unidpp-issuer` once TODO #10 lands), bind mounts
+# each sibling repo ships its own Dockerfile ( hygiene for
+# `unidpp-registry`; `unidpp-issuer` once  lands), bind mounts
 # run `cargo build --release && cargo run --release` inside the rust
 # image — slow on first build, instant on subsequent ones thanks to a
 # named cargo cache volume.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # issuer-hook.sh — the SINGLE, clearly-marked issuer integration point.
 #
-# TODO.impl/10-remaining-tasks-definitive.md, item `10-issuer-service.md`
+# , item `10-issuer-service.md`
 # defines the unidpp-issuer contract this file integrates against. The
 # contract in tree as of 2026-09-07:
 #
@@ -19,7 +19,7 @@
 #                                        -> {pack, anchor, bytes, ec, ...}
 #   GET  /passports/{id}/verdict         full-pipeline verdict + coverage
 #
-# Today the issuer binary is mid-build (the parallel TODO #10 agent is
+# Today the issuer binary is mid-build (the parallel  agent is
 # still landing wire shapes), so the DEFAULT driver below performs the
 # equivalent steps with the unidpp-cli (create | event | pack) against
 # local passport JSON files. Activate the service mode explicitly:
@@ -48,7 +48,7 @@ ISSUER_BIND="${UNIDPP_ISSUER_BIND:-127.0.0.1:8096}"
 ISSUER_ADMIN_TOKEN="${UNIDPP_ISSUER_ADMIN_TOKEN:-}"
 
 # Activate the issuer driver ONLY with an explicit UNIDPP_ISSUER_URL.
-# Auto-sniffing the binary is racy while TODO #10 is still landing: the
+# Auto-sniffing the binary is racy while  is still landing: the
 # debug binary can appear under our feet mid-run and flip behavior
 # non-deterministically; an explicit URL keeps `make demo`
 # deterministic today.
