@@ -2,7 +2,8 @@
 
 The public, end-to-end demonstration orchestrator — **the public end-to-end demonstration**.
 Walks the [Momiji Mobility E8](../../the UniDPP E8 exemplar story) story
-beats (B1–B10) against the running registry, signed Tier-A packs, and the
+beats (B1–B10, plus the B-CTO build-to-order variant between B2 and B3)
+against the running registry, signed Tier-A packs, and the
 offline verifier. Exits non-zero on any unexpected verify outcome.
 
 Source of truth: [`the UniDPP E8 exemplar story`](../../the UniDPP E8 exemplar story).

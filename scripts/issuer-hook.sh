@@ -127,11 +127,15 @@ api_get_passport() {
 
 # Compose the create-passport JSON body from the orchestrator's CLI
 # arguments. The issuer's API uses `identity` (CLI uses --id); we
-# always send identity + capability; the rest is optional.
+# always send identity + capability; the rest is optional. The eighth
+# argument (optional, comma-separated) is the CTO configuration
+# vector — issuer-mode only (the local driver carries it as a sidecar).
 issuer_create_body() {
     python3 - "$@" <<'PYEOF'
 import json, sys
-identity, type_ref, capability, eo_id, resolver_uri, passport_id = sys.argv[1:]
+args = sys.argv[1:]
+identity, type_ref, capability, eo_id, resolver_uri, passport_id = args[:6]
+config = args[6] if len(args) > 6 and args[6] not in ("", "-") else None
 body = {
     "identity": identity,
     "capability": capability,
@@ -144,6 +148,8 @@ if resolver_uri != "-":
     body["resolver_uri"] = resolver_uri
 if passport_id != "-":
     body["passport_id"] = passport_id
+if config:
+    body["config"] = [token.strip() for token in config.split(",") if token.strip()]
 print(json.dumps(body))
 PYEOF
 }
@@ -202,11 +208,13 @@ issuer_create() {
     issuer_create_resolver="$5"
     issuer_create_urn="$6"
     issuer_create_out="$7"
+    issuer_create_config="${8:-}"
 
     if [ "$(detect_issuer_mode)" = issuer ]; then
         issuer_create_body_json="$(issuer_create_body \
             "$issuer_create_id" "$issuer_create_type" "$issuer_create_cap" \
-            "$issuer_create_eo" "$issuer_create_resolver" "$issuer_create_urn")"
+            "$issuer_create_eo" "$issuer_create_resolver" "$issuer_create_urn" \
+            "$issuer_create_config")"
         note "issuer service mode: POST /passports $issuer_create_id"
         if ! api_post_json "$ISSUER_URL/passports" "$issuer_create_body_json" \
             >"$issuer_create_out" 2>/dev/null; then

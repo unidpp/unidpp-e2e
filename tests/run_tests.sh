@@ -88,6 +88,11 @@ test_happy_path() {
 
     beats_present="$(grep -cE '^B[0-9]+ — ' "$plain" || true)"
     assert "all ten STORY beats labelled" 10 "$beats_present"
+    # The CTO composition beat rides between B2 and B3.
+    cto_present="$(grep -cF 'B-CTO — The build-to-order variant' "$plain" || true)"
+    assert "CTO composition beat labelled" 1 "$cto_present"
+    cto_children="$(grep -cF 'CTO instance outgoing installs == 2 == 2' "$plain" || true)"
+    assert "CTO composed instance shows its two children" 1 "$cto_children"
 
     for beat_label in 'B1 — Assembly in Kyoto' \
                       'B2 — Parts carry their own duties' \

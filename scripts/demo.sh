@@ -143,6 +143,39 @@ print(len(json.load(open(sys.argv[1]))[sys.argv[2]]))
 PYEOF
 }
 
+# Count the outgoing installation edges in a passport document (the
+# CTO composition check: the config vector resolves through the graph).
+python3_count_installs() { # python3_count_installs <file>
+    python3 - "$1" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+events = doc.get("log", {}).get("sealed", [])
+installs = [
+    e["event"]["payload"]["Install"]["target"]["Open"]
+    for e in events
+    if e["event"].get("event_type") == "install"
+]
+print(len([i for i in installs if i["direction"] == "outgoing"]))
+PYEOF
+}
+
+# The `other` passport of the n-th installation edge (either direction;
+# the CTO child/parent knowledge check).
+python3_install_child() { # python3_install_child <file> <index>
+    python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+index = int(sys.argv[2])
+events = doc.get("log", {}).get("sealed", [])
+installs = [
+    e["event"]["payload"]["Install"]["target"]["Open"]
+    for e in events
+    if e["event"].get("event_type") == "install"
+]
+print(installs[index]["other"] if index < len(installs) else "")
+PYEOF
+}
+
 # Extract a dotted JSON path (one nesting level per dot) with python3.
 json_path() { # json_path <file> <dotted.path>
     python3 - "$1" "$2" <<'PYEOF'
@@ -588,6 +621,128 @@ main() {
     say "certificate join:         $(json_get "$WORK_DIR/reg-transform.json" identifier) (class $(json_get "$WORK_DIR/reg-transform.json" item_class))"
 
     what "a foreign verifier reads a CCC certificate without adopting CN rules — equivalence claims are registered transforms, not re-issuance."
+
+
+    # =====================================================================
+    beat "B-CTO" "The build-to-order variant (configuration-vector composition)"
+    # =====================================================================
+    what "CTO = model + configuration vector: each option is a registered model with its own passport; the instance composes through the same R3 edges."
+
+    CTO_ID="local:momiji:e8/J-000843"
+    CTO_URN="urn:unidpp:passport:momiji-e8-j000843"
+    CTO_BATT_STD_TYPE_URN="urn:unidpp:passport:weilian-wp-type-std"
+    CTO_BATT_LR_TYPE_URN="urn:unidpp:passport:voltaro-wp-type-lr9"
+    CTO_RACK_TYPE_URN="urn:unidpp:passport:arca-rack-type-r200"
+    CTO_BATT_LR_URN="urn:unidpp:passport:voltaro-lr-0001"
+    CTO_RACK_URN="urn:unidpp:passport:arca-r200-0007"
+    CTO_CONFIG="urn:unidpp:option:battery:long-range,urn:unidpp:option:rack:yes"
+
+    # Option families: one model passport per option (the catalogue).
+    issuer_create "local:weilian:wp/type-STD" - S0 weilian-shenzhen \
+        "https://resolver.unidpp.org/r/weilian-wp-type-std" \
+        "$CTO_BATT_STD_TYPE_URN" "$WORK_DIR/cto-batt-std-type.json"
+    issuer_create "local:voltaro:wp/type-LR9" - S0 voltaro-eu \
+        "https://resolver.unidpp.org/r/voltaro-wp-type-lr9" \
+        "$CTO_BATT_LR_TYPE_URN" "$WORK_DIR/cto-batt-lr-type.json"
+    issuer_create "local:arca:rack/type-R200" - S0 arca-cycles \
+        "https://resolver.unidpp.org/r/arca-rack-type-r200" \
+        "$CTO_RACK_TYPE_URN" "$WORK_DIR/cto-rack-type.json"
+    issuer_event "$WORK_DIR/cto-batt-std-type.json" issuance \
+        '{"derived":false,"inputs":[]}' weilian-shenzhen "issuing authority" "2027-04-01T08:00:00Z"
+    issuer_event "$WORK_DIR/cto-batt-lr-type.json" issuance \
+        '{"derived":false,"inputs":[]}' voltaro-eu "issuing authority" "2027-04-01T08:30:00Z"
+    issuer_event "$WORK_DIR/cto-rack-type.json" issuance \
+        '{"derived":false,"inputs":[]}' arca-cycles "issuing authority" "2027-04-01T09:00:00Z"
+
+    # The CTO instance: the 2027.1 frame plus the ordered configuration
+    # vector [battery: long-range, rack: yes] — a second bike off the
+    # same line, composed, not re-engineered.
+    issuer_create "$CTO_ID" "$BIKE_TYPE_REF" S2 momiji-mobility \
+        "https://resolver.unidpp.org/r/momiji-e8-j000843" \
+        "$CTO_URN" "$WORK_DIR/e8-cto.json" "$CTO_CONFIG"
+    issuer_event "$WORK_DIR/e8-cto.json" issuance \
+        '{"derived":false,"inputs":[]}' momiji-mobility "issuing authority" "2027-04-12T11:00:00Z"
+
+    # Option instances: the chosen long-range pack and the rack.
+    issuer_create "local:voltaro:wp/LR-0001" "voltaro:wp/type/LR9" S2 voltaro-eu \
+        "https://resolver.unidpp.org/r/voltaro-lr-0001" \
+        "$CTO_BATT_LR_URN" "$WORK_DIR/cto-batt-lr.json"
+    issuer_create "local:arca:rack/R-200-0007" "arca:rack/type/R200" S1 arca-cycles \
+        "https://resolver.unidpp.org/r/arca-r200-0007" \
+        "$CTO_RACK_URN" "$WORK_DIR/cto-rack.json"
+    issuer_event "$WORK_DIR/cto-batt-lr.json" issuance \
+        '{"derived":false,"inputs":[]}' voltaro-eu "issuing authority" "2027-04-12T10:30:00Z"
+    issuer_event "$WORK_DIR/cto-rack.json" issuance \
+        '{"derived":false,"inputs":[]}' arca-cycles "issuing authority" "2027-04-12T10:45:00Z"
+
+    # Composition through the SAME typed R3 edges (bidirectional).
+    issuer_event "$WORK_DIR/e8-cto.json" install \
+        "$(install_data outgoing "$CTO_BATT_LR_URN" 2027-04-12T11:10:00Z - fastened restorable firmware)" \
+        momiji-assembly installer "2027-04-12T11:10:00Z"
+    issuer_event "$WORK_DIR/cto-batt-lr.json" install \
+        "$(install_data incoming "$CTO_URN" 2027-04-12T11:10:00Z - fastened restorable firmware)" \
+        momiji-assembly installer "2027-04-12T11:10:00Z"
+    issuer_event "$WORK_DIR/e8-cto.json" install \
+        "$(install_data outgoing "$CTO_RACK_URN" 2027-04-12T11:15:00Z - fastened restorable none)" \
+        momiji-assembly installer "2027-04-12T11:15:00Z"
+    issuer_event "$WORK_DIR/cto-rack.json" install \
+        "$(install_data incoming "$CTO_URN" 2027-04-12T11:15:00Z - fastened restorable none)" \
+        momiji-assembly installer "2027-04-12T11:15:00Z"
+
+    # The composition manifest: the config vector as a build artifact.
+    python3 - "$WORK_DIR/cto-config.json" "$CTO_CONFIG" <<'PYEOF'
+import json, sys
+out, config = sys.argv[1], sys.argv[2]
+vector = [token.strip() for token in config.split(",") if token.strip()]
+with open(out, "w") as fh:
+    json.dump({
+        "model": "momiji:e8/type/2027.1",
+        "instance": "urn:unidpp:passport:momiji-e8-j000843",
+        "config": vector,
+    }, fh, indent=2)
+PYEOF
+
+    say "frame model         momiji:e8/type/2027.1 (the same type passport as J-000842)"
+    say "configuration       $CTO_CONFIG"
+    say "composed children   $CTO_BATT_LR_URN (battery LR) + $CTO_RACK_URN (rack)"
+    say "not chosen          the STD battery model exists in the catalogue — no instance, no edge"
+
+    # The composed instance's installation edges resolve to exactly the
+    # configured children (the projector's traversal, read from the
+    # graph itself).
+    cto_children="$(python3_count_installs "$WORK_DIR/e8-cto.json")"
+    check "CTO instance outgoing installs == 2" 2 "$cto_children"
+    check "CTO battery edge names the LR pack" "$CTO_BATT_LR_URN"         "$(python3_install_child "$WORK_DIR/e8-cto.json" 0)"
+    check "CTO rack edge names the rack" "$CTO_RACK_URN"         "$(python3_install_child "$WORK_DIR/e8-cto.json" 1)"
+    # Bidirectional knowledge: each child's incoming edge names the CTO.
+    check "LR pack incoming edge names the CTO instance" "$CTO_URN"         "$(python3_install_child "$WORK_DIR/cto-batt-lr.json" 0)"
+    check "rack incoming edge names the CTO instance" "$CTO_URN"         "$(python3_install_child "$WORK_DIR/cto-rack.json" 0)"
+    # The rejected option never enters this build's graph.
+    if grep -q "$CTO_BATT_STD_TYPE_URN" "$WORK_DIR/e8-cto.json"; then
+        check "STD battery absent from the CTO graph" absent present
+    else
+        check "STD battery absent from the CTO graph" absent absent
+    fi
+    # The configuration vector is queryable on the live document.
+    if [ "$(detect_issuer_mode)" = issuer ]; then
+        show "GET $ISSUER_URL/passports/$CTO_URN"
+        curl -sf "$ISSUER_URL/passports/$CTO_URN" >"$WORK_DIR/e8-cto-view.json" \
+            || fail "cannot query the CTO instance"
+        check "config vector queryable == 2 options" 2 \
+            "$(python3_count "$WORK_DIR/e8-cto-view.json" config)"
+    else
+        say "config vector:      local driver mode — the sidecar manifest $WORK_DIR/cto-config.json"
+    fi
+
+    # The composed instance verifies like any other: one identity, one
+    # pack, the same pipeline.
+    cto_anchor="$(issuer_mint_pack "$WORK_DIR/e8-cto.json" "$WORK_DIR/b-cto.pack")"
+    verify_and_expect "$WORK_DIR/b-cto.pack" "$cto_anchor" \
+        "2027-04-12T11:30:00Z" 0 \
+        "B-CTO composed instance — issued, both children recorded"
+    log_anchor_pack "$WORK_DIR/b-cto.pack" b-cto "$CTO_URN"
+
+    what "the CTO variant is composition, not re-issuance: the same frame type, one config vector, R3 edges to each chosen option's own passport."
 
     # =====================================================================
     beat "B3" "Placement in the EU (profile growth by dated binding)"
