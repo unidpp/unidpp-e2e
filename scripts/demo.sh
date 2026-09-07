@@ -1,0 +1,704 @@
+#!/usr/bin/env bash
+# demo.sh — the UniDPP end-to-end story: the Momiji Mobility E8 walks
+# the ten STORY.md beats against real services and real artifacts.
+#
+# Source of truth: ~/src/isoiecjtc5/exemplar/STORY.md (B1-B10).
+# Every beat is labeled with its STORY number and a one-line "what just
+# happened". Any command that does not produce its expected outcome
+# aborts the run with a non-zero exit; every `unidpp verify` result is
+# asserted against the beat's expected verdict (pass / degraded / fail)
+# — an unexpected verify outcome fails the demo.
+#
+# Services: unidpp-registry (../unidpp-registry, TODO #12) is started
+# locally and seeded with the story's profile applicability bindings.
+# Issuance goes through scripts/issuer-hook.sh — today driven by the
+# unidpp-cli (TODO #11), automatically switching to the unidpp-issuer
+# service (TODO #10) once its binary exists (see that file).
+
+set -u
+set -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+FAMILY_DIR="$(cd "$ROOT_DIR/.." && pwd)"
+WORK_DIR="${UNIDPP_E2E_WORK_DIR:-$ROOT_DIR/build/e2e}"
+
+UNIDPP="${UNIDPP_BIN:-$FAMILY_DIR/unidpp-cli/target/release/unidpp}"
+REGISTRY_BIN="${UNIDPP_REGISTRY_BIN:-$FAMILY_DIR/unidpp-registry/target/release/unidpp-registry}"
+REGISTRY_BIND="${UNIDPP_REGISTRY_BIND:-127.0.0.1:8098}"
+REGISTRY_URL="${UNIDPP_REGISTRY_URL:-http://$REGISTRY_BIND}"
+
+# STORY cast (STORY.md section 0 — the identities of every beat).
+BIKE_ID="local:momiji:e8/J-000842"
+TYPE_ID="local:momiji:e8/type/2027.1"
+BIKE_URN="urn:unidpp:passport:momiji-e8-j000842"
+TYPE_URN="urn:unidpp:passport:momiji-e8-type-2027-1"
+DRIVE_URN="urn:unidpp:passport:rhine-du-m771"
+PACK_URN="urn:unidpp:passport:weilian-wp-p9904"
+LOT_URN="urn:unidpp:passport:haichuan-cell-h2231"
+NEWPACK_URN="urn:unidpp:passport:voltaro-wp-eu7781"
+SCRAP_URN="urn:unidpp:passport:scrap-steel-j000842"
+RECYCLE_URN="urn:unidpp:passport:recycle-pack-j000842"
+
+BIKE_TYPE_REF="momiji:e8/type/2027.1"
+
+FAILED=0
+CHECKS_TOTAL=0
+CHECKS_OK=0
+REGISTRY_PID=""
+TRANSCRIPT="$WORK_DIR/transcript.txt"
+
+# ---------------------------------------------------------------------------
+# Narration helpers
+# ---------------------------------------------------------------------------
+
+hr() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+beat() { # beat <B-number> <title>
+    printf '\n\033[1m======================================================================\033[0m\n'
+    printf '\033[1m%s — %s\033[0m\n' "$1" "$2"
+    printf '\033[1m----------------------------------------------------------------------\033[0m\n'
+}
+
+what() { # what just happened — the one-line beat narration
+    printf '\033[36m    what just happened: %s\033[0m\n' "$*"
+}
+
+say() { # narrator voice (facts read out of the artifacts)
+    printf '    %s\n' "$*"
+}
+
+note() { # orchestration notes (not story narration)
+    printf '\033[33m    [orchestrator] %s\033[0m\n' "$*"
+}
+
+show() { # show the command the story is about to run
+    printf '  \033[32m$ %s\033[0m\n' "$*"
+}
+
+# Run a command quietly: echo it, run it, abort the demo on failure.
+run_quiet() {
+    show "$*"
+    if ! "$@" >/dev/null; then
+        fail "command failed: $*"
+    fi
+}
+
+check() { # check <label> <expected> <actual>
+    check_label="$1"
+    check_expected="$2"
+    check_actual="$3"
+    CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
+    if [ "$check_expected" = "$check_actual" ]; then
+        CHECKS_OK=$((CHECKS_OK + 1))
+        printf '  \033[32m[ok]\033[0m   %s == %s\n' "$check_label" "$check_expected"
+    else
+        FAILED=$((FAILED + 1))
+        printf '  \033[31m[FAIL]\033[0m %s: expected %s, got %s\n' \
+            "$check_label" "$check_expected" "$check_actual"
+    fi
+}
+
+fail() {
+    printf '\n\033[31mE8 STORY ABORTED: %s\033[0m\n' "$1" >&2
+    exit 1
+}
+
+# Extract a top-level JSON field with python3 (no jq dependency).
+json_get() { # json_get <file> <field>
+    python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+with open(sys.argv[1]) as fh:
+    doc = json.load(fh)
+print(doc[sys.argv[2]])
+PYEOF
+}
+
+# Count the length of a JSON array field in a file.
+python3_count() { # python3_count <file> <field>
+    python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+print(len(json.load(open(sys.argv[1]))[sys.argv[2]]))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# Service helpers
+# ---------------------------------------------------------------------------
+
+registry_post() { # registry_post <path> <json-body> [out-file]
+    rp_path="$1"
+    rp_body="$2"
+    rp_out="${3:-/dev/null}"
+    show "POST $REGISTRY_URL$rp_path  $rp_body"
+    # 4xx is fine for re-runs of the test harness (idempotent item
+    # registration + applicability bind of the same triple returns 409
+    # "already registered"); only server errors abort the demo.
+    rp_http_code="$(curl -s -o "$rp_out" -w '%{http_code}' \
+        -X POST "$REGISTRY_URL$rp_path" \
+        -H 'content-type: application/json' \
+        --data "$rp_body")"
+    if [ "$rp_http_code" -ge 500 ]; then
+        fail "registry POST $rp_path returned $rp_http_code (see $(cat "$rp_out" 2>/dev/null))"
+    fi
+}
+
+# Has the registry already seen this exact applicability triple
+# (profile × subject × effective_from)? The registry itself does NOT
+# deduplicate applicability bindings (the dated-binding model allows
+# multiple windows for the same profile), so re-runs accumulate a
+# duplicate audit record. Detect the duplicate client-side and skip
+# the POST so the demo's as-of assertions remain deterministic.
+binding_already_seen() {
+    # Silent query (no show line): this function's stdout is captured.
+    binding_already_seen_product="$1"
+    binding_already_seen_path="$WORK_DIR/reg-applicability-check.json"
+    curl -s "$REGISTRY_URL/applicability?product_type=$binding_already_seen_product&at=2028-06-01T00:00:00Z" \
+        >"$binding_already_seen_path"
+    python3 - "$binding_already_seen_path" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+print(len(doc.get("applicability", [])))
+PYEOF
+}
+
+registry_get() { # registry_get <path> [out-file]
+    rg_path="$1"
+    rg_out="${2:-/dev/null}"
+    show "GET $REGISTRY_URL$rg_path"
+    if ! curl -s "$REGISTRY_URL$rg_path" >"$rg_out"; then
+        fail "registry GET failed: $rg_path"
+    fi
+}
+
+start_registry() {
+    if [ -n "${UNIDPP_REGISTRY_URL:-}" ]; then
+        note "using external registry at $REGISTRY_URL (not starting one)"
+    else
+        [ -x "$REGISTRY_BIN" ] || fail "registry binary missing: $REGISTRY_BIN (run: make deps)"
+        note "starting unidpp-registry on $REGISTRY_BIND"
+        UNIDPP_REGISTRY_BIND="$REGISTRY_BIND" "$REGISTRY_BIN" >/dev/null 2>&1 &
+        REGISTRY_PID=$!
+    fi
+
+    registry_ready=0
+    registry_try=0
+    while [ "$registry_try" -lt 50 ]; do
+        if curl -sf "$REGISTRY_URL/healthz" >/dev/null 2>&1; then
+            registry_ready=1
+            break
+        fi
+        registry_try=$((registry_try + 1))
+        sleep 0.2
+    done
+    [ "$registry_ready" = 1 ] || fail "registry did not become healthy on $REGISTRY_URL"
+    say "unidpp-registry healthy at $REGISTRY_URL (19135 item service, TODO #12)"
+}
+
+stop_registry() {
+    if [ -n "$REGISTRY_PID" ]; then
+        kill "$REGISTRY_PID" 2>/dev/null
+        wait "$REGISTRY_PID" 2>/dev/null
+        REGISTRY_PID=""
+    fi
+}
+
+cleanup() { stop_registry; }
+trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Verify helper — run `unidpp verify` and ASSERT the expected verdict.
+# Exit codes: 0 pass, 1 degraded, 2 fail (never silently accepted).
+# ---------------------------------------------------------------------------
+
+verify_and_expect() { # verify_and_expect <pack> <anchor> <as-of> <expected> <why> [extra-args...]
+    ve_pack="$1"
+    ve_anchor="$2"
+    ve_asof="$3"
+    ve_expected="$4"
+    ve_why="$5"
+    shift 5
+    ve_extra="$*"
+
+    case "$ve_expected" in
+        0) ve_expected_label="pass" ;;
+        1) ve_expected_label="degraded" ;;
+        2) ve_expected_label="fail" ;;
+        *) fail "internal: bad expected verdict $ve_expected" ;;
+    esac
+
+    show "unidpp verify $ve_pack --anchor <pinned> --as-of $ve_asof $ve_extra   # expect: $ve_expected_label"
+    # shellcheck disable=SC2086
+    "$UNIDPP" verify "$ve_pack" --anchor "$ve_anchor" --as-of "$ve_asof" $ve_extra
+    ve_code=$?
+    [ "$ve_code" -eq 127 ] && fail "unidpp CLI not found at $UNIDPP (run: make deps)"
+    check "verify verdict ($ve_why)" "$ve_expected" "$ve_code"
+    if [ "$ve_code" != "$ve_expected" ]; then
+        fail "verify returned $ve_code, expected $ve_expected ($ve_expected_label): $ve_why"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Payload builders (typed JSON per unidpp-core/crates/event/src/payload.rs)
+# ---------------------------------------------------------------------------
+
+# install_data <direction> <other-urn> <from> <alteration|-> <method>
+#               <recoverability> <pairing>
+install_data() {
+    id_direction="$1"
+    id_other="$2"
+    id_from="$3"
+    id_alteration="$4"
+    id_method="$5"
+    id_recoverability="$6"
+    id_pairing="$7"
+
+    id_alterations='[]'
+    if [ "$id_alteration" != "-" ]; then
+        id_alterations="[\"Known\",\"$id_alteration\"]"
+    fi
+
+    printf '{"target":{"Open":{"link_type":"installation","other":"%s","direction":"%s","interval":{"from":"%s","to":null},"binding":{"method":"%s","recoverability":"%s","visibility":{"edge":"public","audiences":[]},"slot_id":null,"pairing":"%s","alterations":%s}}}}' \
+        "$id_other" "$id_direction" "$id_from" "$id_method" \
+        "$id_recoverability" "$id_pairing" "$id_alterations"
+}
+
+# uninstall_data <other-urn> <interval-from> <interval-to> — closes the
+# installation interval; outcome harvested (provenance carries forward).
+uninstall_data() {
+    printf '{"link":{"link_type":"installation","other":"%s","direction":"outgoing","interval":{"from":"%s","to":"%s"},"binding":{"method":"fastened","recoverability":"restorable","visibility":{"edge":"public","audiences":[]},"slot_id":null,"pairing":"firmware","alterations":[]}},"outcome":"harvested"}' \
+        "$1" "$2" "$3"
+}
+
+# stamp_data <subject-urn> <attester> <at> — a lens-scoped, dated, signed
+# condition stamp (B8 auction lens; B5 service lens).
+stamp_data() {
+    printf '{"stamp":{"attester":"%s","subject":"%s","subject_state_commitment":"0000000000000000000000000000000000000000000000000000000000000000","lens":"urn:unidpp:profile:lens-auction","lens_version":"1","mode":"snapshot","verdict_summary":"grade A-","coverage_report":null,"log_anchored_at":"%s","quantity_context":null}}' \
+        "$2" "$1" "$3"
+}
+
+# decompose_data — B10 mass balance: 25.9 kg in; 21.4 + 4.3 out; 0.2 loss.
+decompose_data() {
+    printf '{"outputs":[{"child":"%s","quantity":{"amount":"21.4","unit":{"uom":"kg","registry_uri":"https://unitsml.org/units/kg"}}},{"child":"%s","quantity":{"amount":"4.3","unit":{"uom":"kg","registry_uri":"https://unitsml.org/units/kg"}}}],"accredited_for_claims":true}' \
+        "$SCRAP_URN" "$RECYCLE_URN"
+}
+
+# Registry seed bodies (TODO #12 wire shapes).
+reg_transform_body() {
+    printf '{"register_id":"unidpp-e2e","item_id":"gb4943-1-2022-eq-iec-62368-1","class":"transform","definition":"GB 4943.1-2022 ~= IEC 62368-1 certificate equivalence (attester: cqc)","version":"1.0.0"}'
+}
+
+reg_profile_body() {
+    printf '{"register_id":"unidpp-e2e","item_id":"eu-battery-lmt","class":"profile","definition":"EU battery passport profile - LMT class (Reg. (EU) 2023/1542)","version":"1.0.0","effective_from":"2027-02-18T00:00:00Z"}'
+}
+
+reg_binding_body() {
+    printf '{"profile_id":"eu-battery-lmt","product_type":"%s","effective_from":"2028-02-01T00:00:00Z"}' \
+        "$BIKE_TYPE_REF"
+}
+
+# B10 mass balance narration: in - out = loss, computed from the artifact.
+mass_balance() {
+    python3 - "$WORK_DIR/e8-instance.json" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+decompose = [e for e in doc["log"]["sealed"]
+             if e["event"]["event_type"] == "decompose"][-1]
+payload = decompose["event"]["payload"]
+outs = payload.get("Decompose", payload).get("outputs", [])
+total_in = 25.9
+total_out = sum(float(o["quantity"]["amount"]) for o in outs)
+loss = total_in - total_out
+for o in outs:
+    print("    out: {:>5} kg  ->  {}".format(o["quantity"]["amount"], o["child"]))
+print("    in : {:>5} kg  (declared mass)".format(total_in))
+print("    loss = in - out = {:.1f} kg  (auditable)".format(loss))
+PYEOF
+}
+
+# Narrate the last milestone counters (B5) from the artifact.
+b5_counters() {
+    python3 - "$WORK_DIR/e8-instance.json" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+milestones = [e for e in doc["log"]["sealed"]
+              if e["event"]["event_type"] == "milestone.record"]
+if not milestones:
+    print("    (no milestone events recorded)")
+else:
+    counters = milestones[-1]["event"]["payload"]
+    counters = counters.get("MilestoneRecord", counters).get("counters", {})
+    for key, value in counters.items():
+        print("    counter: {} = {}".format(key, value))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# The story
+# ---------------------------------------------------------------------------
+
+main() {
+    mkdir -p "$WORK_DIR"
+
+    [ -x "$UNIDPP" ] || fail "unidpp CLI missing: $UNIDPP (run: make deps)"
+    [ -x "$(command -v python3)" ] || fail "python3 is required"
+    [ -x "$(command -v curl)" ] || fail "curl is required"
+
+    hr "UniDPP end-to-end — the Momiji Mobility E8 (STORY.md beats B1-B10)"
+    say "run:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    say "story:    the E8 cast and beats of ~/src/isoiecjtc5/exemplar/STORY.md"
+    say "artifacts: $WORK_DIR"
+
+    . "$SCRIPT_DIR/issuer-hook.sh"
+
+    issuer_driver="$(detect_issuer_mode)"
+    if [ "$issuer_driver" = issuer ]; then
+        say "issuance: unidpp-issuer service (TODO #10) at $ISSUER_URL"
+    else
+        say "issuance: unidpp-cli (TODO #11) — the unidpp-issuer service binary is"
+        say "not present yet; scripts/issuer-hook.sh switches to it automatically"
+    fi
+
+    start_registry
+
+    # =====================================================================
+    beat "B1" "Assembly in Kyoto (issuance where duty attaches)"
+    # =====================================================================
+    what "the JP type passport and the instance passport exist, and the build record lists every part at finest recorded granularity."
+
+    issuer_create "$TYPE_ID" - S0 momiji-mobility \
+        "https://resolver.unidpp.org/r/momiji-e8-type-2027-1" \
+        "$TYPE_URN" "$WORK_DIR/e8-type.json"
+    issuer_create "$BIKE_ID" "$BIKE_TYPE_REF" S2 momiji-mobility \
+        "https://resolver.unidpp.org/r/momiji-e8-j000842" \
+        "$BIKE_URN" "$WORK_DIR/e8-instance.json"
+    issuer_create "local:rhine:du/M-771233" - S1 rhine-drives-de \
+        "https://resolver.unidpp.org/r/rhine-du-m771" \
+        "$DRIVE_URN" "$WORK_DIR/drive-unit.json"
+    issuer_create "local:weilian:wp/P-9904" - S2 weilian-shenzhen \
+        "https://resolver.unidpp.org/r/weilian-wp-p9904" \
+        "$PACK_URN" "$WORK_DIR/pack-original.json"
+    issuer_create "local:haichuan:cell/H-2231" - S0 haichuan-cn \
+        "https://resolver.unidpp.org/r/haichuan-cell-h2231" \
+        "$LOT_URN" "$WORK_DIR/cell-lot.json"
+
+    say "instance passport   $(json_get "$WORK_DIR/e8-instance.json" passport_id) ($(json_get "$WORK_DIR/e8-instance.json" product_id))"
+    say "type passport       $(json_get "$WORK_DIR/e8-type.json" passport_id) ($(json_get "$WORK_DIR/e8-type.json" product_id))"
+    say "type ref + version  $BIKE_TYPE_REF (the 2028.1 hardware revision exists — type-version visibility)"
+    say "dormant identifiers: the 40 Haichuan cells of lot H-2231 have no passports yet — absorption is regime-temporal"
+
+    issuer_event "$WORK_DIR/e8-type.json" issuance \
+        '{"derived":false,"inputs":[]}' momiji-type-approval "issuing authority" \
+        "2027-04-12T09:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" issuance \
+        '{"derived":false,"inputs":[]}' momiji-mobility "issuing authority" \
+        "2027-04-12T09:30:00Z"
+    issuer_event "$WORK_DIR/pack-original.json" issuance \
+        '{"derived":false,"inputs":[]}' weilian-shenzhen "issuing authority" \
+        "2027-03-02T08:00:00Z"
+    issuer_event "$WORK_DIR/cell-lot.json" issuance \
+        '{"derived":false,"inputs":[]}' haichuan-cn "issuing authority" \
+        "2027-01-15T08:00:00Z"
+    issuer_event "$WORK_DIR/drive-unit.json" issuance \
+        '{"derived":false,"inputs":[]}' rhine-drives-de "issuing authority" \
+        "2027-03-20T08:00:00Z"
+
+    what "invariant I7 in one line: the passport is issued where the legal duty attaches (JP road-traffic/EPAC type facts) — not where the server is."
+
+    # =====================================================================
+    beat "B2" "Parts carry their own duties (mixed-profile children)"
+    # =====================================================================
+    what "installation edges R3 are typed: pairing, alteration, recoverability — bidirectional parent/child knowledge."
+
+    # The bike's outgoing side of each installation edge (R3).
+    issuer_event "$WORK_DIR/e8-instance.json" install \
+        "$(install_data outgoing "$DRIVE_URN" 2027-04-12T10:00:00Z torque-to-yield fastened harvestable none)" \
+        momiji-assembly installer "2027-04-12T10:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" install \
+        "$(install_data outgoing "$PACK_URN" 2027-04-12T10:05:00Z - fastened restorable firmware)" \
+        momiji-assembly installer "2027-04-12T10:05:00Z"
+    # The parts' incoming side (bidirectional knowledge).
+    issuer_event "$WORK_DIR/pack-original.json" install \
+        "$(install_data incoming "$BIKE_URN" 2027-04-12T10:05:00Z - fastened restorable firmware)" \
+        momiji-assembly installer "2027-04-12T10:05:00Z"
+    # The pack's cells: dormant identifiers recorded as an installation
+    # edge to the lot identity at finest recorded granularity (I3).
+    issuer_event "$WORK_DIR/pack-original.json" install \
+        "$(install_data incoming "$LOT_URN" 2027-03-02T08:30:00Z - potted absorbing none)" \
+        weilian-shenzhen installer "2027-03-02T08:30:00Z"
+
+    # The charger's CCC certificate joins the subregister as a registered
+    # equivalence transform (GB 4943.1-2022 ~= IEC 62368-1) — B2's
+    # "equivalence as a registered transform".
+    registry_post /items "$(reg_transform_body)" "$WORK_DIR/reg-transform-response.json"
+    registry_get /transforms/gb4943-1-2022-eq-iec-62368-1 "$WORK_DIR/reg-transform.json"
+
+    say "bike -> drive unit:       torque-mount alteration, harvestable (recoverability spectrum)"
+    say "bike -> pack:             battery swappable = restorable, CAN/firmware pairing"
+    say "pack -> cell lot H-2231:  absorbing (dormant identifiers — the cell-passport ratchet adopts them one day)"
+    say "certificate join:         $(json_get "$WORK_DIR/reg-transform.json" identifier) (class $(json_get "$WORK_DIR/reg-transform.json" item_class))"
+
+    what "a foreign verifier reads a CCC certificate without adopting CN rules — equivalence claims are registered transforms, not re-issuance."
+
+    # =====================================================================
+    beat "B3" "Placement in the EU (profile growth by dated binding)"
+    # =====================================================================
+    what "the EU lens set binds onto the SAME identity by a registry applicability event — no re-minting, no parallel-universe passport (I1)."
+
+    registry_post /items "$(reg_profile_body)" "$WORK_DIR/reg-profile-response.json"
+    # Idempotence: only POST the binding when this exact triple has not
+    # yet been recorded (the registry does not deduplicate bindings).
+    existing_bindings="$(binding_already_seen "$BIKE_TYPE_REF")"
+    if [ "$existing_bindings" = 0 ]; then
+        registry_post /applicability "$(reg_binding_body)" "$WORK_DIR/reg-binding-response.json"
+    else
+        note "applicability binding already present ($existing_bindings) — skipped (registry journal carries it)"
+    fi
+
+    registry_get "/applicability?product_type=$BIKE_TYPE_REF&at=2027-06-01T00:00:00Z" "$WORK_DIR/reg-applicability-2027.json"
+    say "at 2027-06-01 (JP market only): no EU duty applies yet"
+    registry_get "/applicability?product_type=$BIKE_TYPE_REF&at=2028-06-01T00:00:00Z" "$WORK_DIR/reg-applicability-2028.json"
+    say "at 2028-06-01: the EU battery-lens binding is in force for the same type ref"
+
+    b3_before="$(python3_count "$WORK_DIR/reg-applicability-2027.json" applicability)"
+    b3_after="$(python3_count "$WORK_DIR/reg-applicability-2028.json" applicability)"
+    check "EU profiles bound at 2027-06-01 (before placement)" 0 "$b3_before"
+    check "EU profiles bound at 2028-06-01 (after placement)" 1 "$b3_after"
+
+    # The importer becomes the battery producer (LMT duty): the
+    # placement custody edge, dated for the border moment.
+    issuer_event "$WORK_DIR/e8-instance.json" custody.transfer \
+        '{"from":"momiji-mobility","to":"dusseldorf-importer","counterparty_signed":true}' \
+        momiji-mobility custodian "2028-02-14T18:00:00Z"
+
+    what "jurisdiction growth is a registry event + a custody edge — the JP lens stays mounted; manifest history stays as-of-reconstructable."
+
+    # =====================================================================
+    beat "B4" "The border moment (offline, degraded origins)"
+    # =====================================================================
+    what "the officer's terminal verifies the signed Tier-A pack OFFLINE — nothing is fetched — and the three readings print."
+
+    b4_anchor="$(issuer_mint_pack "$WORK_DIR/e8-instance.json" "$WORK_DIR/b4-border.pack")"
+    say "issuer pins anchor (public key, hex): $b4_anchor"
+    say "officer terminal: offline (Shenzhen host unreachable, EU registry mid-outage)"
+
+    verify_and_expect "$WORK_DIR/b4-border.pack" "$b4_anchor" \
+        "2028-02-15T09:30:00Z" 0 \
+        "B4 border moment — PASS, as-of stamped, coverage states what was not reachable"
+
+    what "verdict PASS with the three readings named (cryptographic / evidentiary / current-state) and full field coverage — honesty is the feature."
+
+    # =====================================================================
+    beat "B5" "Life in service (edge state, capability classes)"
+    # =====================================================================
+    what "the S2 BMS commits its log prefix and reveals at the dealer visit (commit-now / reveal-later); staleness becomes bounded."
+
+    # Cleared the border, sold to the first owner (Duesseldorf).
+    issuer_event "$WORK_DIR/e8-instance.json" custody.transfer \
+        '{"from":"dusseldorf-importer","to":"owner-1-duesseldorf","counterparty_signed":true}' \
+        dusseldorf-importer custodian "2028-03-01T10:00:00Z"
+
+    issuer_event "$WORK_DIR/e8-instance.json" milestone.record \
+        '{"counters":{"bms.cycle_count":"412","odometer.km":"2871.4"}}' \
+        e8-bms-controller device "2028-11-05T11:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" inspection.stamp \
+        "$(stamp_data "$BIKE_URN" dealer-service-duesseldorf 2028-11-05T11:00:00Z)" \
+        dealer-service-duesseldorf verifier "2028-11-05T11:20:00Z"
+
+    b5_counters
+
+    say "capability classes on one bike: BMS logs (S2), optional Connect module (S3), silent rack/frame (S0)"
+    say "who measured what, with which unit, under whose model — SoH is a derived verdict whose transform is a registered item"
+
+    what "truth becomes bounded and auditable: the service-center era had episodic, undetectable staleness."
+
+    # =====================================================================
+    beat "B6" "Firmware update and the derestriction incident"
+    # =====================================================================
+    what "the OTA is a software.update (declared values change, no physical change); the dongle is a product.modify that CHANGES THE LEGAL CLASS."
+
+    issuer_event "$WORK_DIR/e8-instance.json" software.update \
+        '{"versions":{"controller":"2.4.1"},"unlocked_features":["range-algorithm-v2"]}' \
+        momiji-mobility "economic operator" "2029-03-02T04:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" custody.transfer \
+        '{"from":"owner-1-duesseldorf","to":"owner-2","counterparty_signed":true}' \
+        owner-1-duesseldorf custodian "2029-05-20T15:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" product.modify \
+        '{"description":"derestriction dongle: assistance cutoff 25 -> 45 km/h","derived_type":"momiji:e8/type/2027.1#moped-2029","reevaluation_required":true}' \
+        owner-2 "accredited modifier" "2029-06-18T16:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" status.change \
+        '{"from":"issued","to":"non-conformant","authority":"jp-road-traffic"}' \
+        jp-road-traffic regulator "2029-06-19T09:00:00Z"
+
+    what "derived type spawns (E4b), profiles re-evaluate (JP: non-conformant; EU: type-approval regime required) — graded, never binary."
+
+    b6_anchor="$(issuer_mint_pack "$WORK_DIR/e8-instance.json" "$WORK_DIR/b6-derestricted.pack")"
+    verify_and_expect "$WORK_DIR/b6-derestricted.pack" "$b6_anchor" \
+        "2029-06-20T10:00:00Z" 2 \
+        "B6 derestriction — the modified machine is legally an unregistered moped (expected FAIL: non-conformant)"
+
+    # The dongle comes off at the next dealer visit; re-evaluation passes.
+    issuer_event "$WORK_DIR/e8-instance.json" product.modify \
+        '{"description":"dongle removed at service: assistance cutoff restored to 25 km/h","derived_type":null,"reevaluation_required":true}' \
+        dealer-service-duesseldorf "accredited modifier" "2029-09-03T10:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" status.change \
+        '{"from":"non-conformant","to":"issued","authority":"jp-road-traffic"}' \
+        jp-road-traffic regulator "2029-09-04T09:00:00Z"
+
+    what "history is never rewritten: the incident stays in the log; the state machine recovered through a legal re-evaluation event."
+
+    # =====================================================================
+    beat "B7" "Repair (regulated child swap, cross-jurisdiction install)"
+    # =====================================================================
+    what "water damage: uninstall + install (two events); the old pack's interval closes CARRYING ITS HISTORY."
+
+    issuer_create "local:voltaro:wp/EU-7781" - S2 voltaro-eu \
+        "https://resolver.unidpp.org/r/voltaro-wp-eu7781" \
+        "$NEWPACK_URN" "$WORK_DIR/pack-2029.json"
+    issuer_event "$WORK_DIR/pack-2029.json" issuance \
+        '{"derived":false,"inputs":[]}' voltaro-eu "issuing authority" "2029-09-10T08:00:00Z"
+
+    issuer_event "$WORK_DIR/e8-instance.json" uninstall \
+        "$(uninstall_data "$PACK_URN" 2027-04-12T10:05:00Z 2029-09-12T10:00:00Z)" \
+        dealer-service-duesseldorf installer "2029-09-12T10:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" install \
+        "$(install_data outgoing "$NEWPACK_URN" 2029-09-12T10:30:00Z - fastened restorable firmware)" \
+        dealer-service-duesseldorf installer "2029-09-12T10:30:00Z"
+    issuer_event "$WORK_DIR/pack-2029.json" install \
+        "$(install_data incoming "$BIKE_URN" 2029-09-12T10:30:00Z - fastened restorable firmware)" \
+        dealer-service-duesseldorf installer "2029-09-12T10:30:00Z"
+
+    # The old pack's own log closes its installation interval and carries
+    # its provenance to the refurbisher.
+    issuer_event "$WORK_DIR/pack-original.json" uninstall \
+        "$(uninstall_data "$BIKE_URN" 2027-04-12T10:05:00Z 2029-09-12T10:00:00Z)" \
+        dealer-service-duesseldorf installer "2029-09-12T10:00:00Z"
+    issuer_event "$WORK_DIR/pack-original.json" custody.transfer \
+        '{"from":"dealer-service-duesseldorf","to":"refurbisher-linz","counterparty_signed":true}' \
+        dealer-service-duesseldorf custodian "2029-09-13T09:00:00Z"
+
+    say "old pack: 412 cycles of H-2231 cells, removed for casing dent — harvested-part provenance IS value"
+    say "new pack: EU-made (Voltaro), installed by a DE dealer into a JP-profile bike (both profiles survive)"
+    say "independent repairer acted under EN 18239-style roles (right-to-repair echo)"
+
+    b7_anchor="$(issuer_mint_pack "$WORK_DIR/pack-2029.json" "$WORK_DIR/b7-newpack.pack")"
+    verify_and_expect "$WORK_DIR/b7-newpack.pack" "$b7_anchor" \
+        "2029-09-12T11:00:00Z" 0 \
+        "B7 new pack (post-swap) — issued, no flags"
+
+    what "cross-jurisdiction install: both profiles survive the swap; the used-parts market keeps provenance the EN pipeline loses silently."
+
+    # =====================================================================
+    beat "B8" "Resale and auction (custody as ceremony; blind edges)"
+    # =====================================================================
+    what "custody transfers are signed ceremonies; the auction lens issues a dated, signed condition stamp; the buyer's household stays invisible."
+
+    issuer_event "$WORK_DIR/e8-instance.json" custody.transfer \
+        '{"from":"owner-2","to":"auction-house-vienna","counterparty_signed":true}' \
+        auction-house-vienna custodian "2031-03-02T10:00:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" inspection.stamp \
+        "$(stamp_data "$BIKE_URN" auction-house-vienna 2031-03-04T14:00:00Z)" \
+        auction-house-vienna verifier "2031-03-04T14:30:00Z"
+    issuer_event "$WORK_DIR/e8-instance.json" custody.transfer \
+        '{"from":"auction-house-vienna","to":"buyer-vienna","counterparty_signed":true}' \
+        auction-house-vienna custodian "2031-03-10T15:00:00Z"
+
+    say "auction house checks the theft predicate against the flag subregister (E12) before listing"
+    say "condition stamp: lens-scoped (auction lens != insurance lens), dated, signed"
+    say "the buyer's household is invisible to Momiji — proof-of-binding != knowledge-of-parent (I12)"
+
+    b8_anchor="$(issuer_mint_pack "$WORK_DIR/e8-instance.json" "$WORK_DIR/b8-auction.pack")"
+    verify_and_expect "$WORK_DIR/b8-auction.pack" "$b8_anchor" \
+        "2031-03-10T16:00:00Z" 0 \
+        "B8 post-auction — the audit trail survives without a central watcher"
+
+    what "enumeration resistance is a system property: the audit trail survives; the surveillance does not exist."
+
+    # =====================================================================
+    beat "B9" "A recall crosses the graph (predicate-based; dormant -> live)"
+    # =====================================================================
+    what "2030-05: Haichuan lot H-2231 recalled (thermal event) — the predicate is published; nobody enumerated the installed base."
+
+    issuer_event "$WORK_DIR/cell-lot.json" recall.campaign \
+        '{"campaign":"R-H2231-THERMAL","predicate":{"FactContains":{"path":"bom.lots","needle":"H-2231"}}}' \
+        cn-samr regulator "2030-05-06T08:00:00Z"
+
+    say "predicate: \"packs containing lot H-2231\" — each custodian evaluates locally against their own holdings"
+    say "the Vienna bike's CURRENT pack (Voltaro, B7) is unaffected — traced through the swap edges"
+
+    # The original pack's custodian (refurbisher -> powerwall) evaluates
+    # the predicate against its own log: it DOES contain H-2231.
+    issuer_event "$WORK_DIR/pack-original.json" recall.campaign \
+        '{"campaign":"R-H2231-THERMAL","predicate":{"FactContains":{"path":"bom.lots","needle":"H-2231"}}}' \
+        refurbisher-linz custodian "2030-05-07T09:00:00Z"
+
+    b9_old_anchor="$(issuer_mint_pack "$WORK_DIR/pack-original.json" "$WORK_DIR/b9-oldpack.pack")"
+    verify_and_expect "$WORK_DIR/b9-oldpack.pack" "$b9_old_anchor" \
+        "2030-05-07T10:00:00Z" 2 \
+        "B9 original pack — REACHED through its own log (expected FAIL: recall active)"
+
+    b9_new_anchor="$(issuer_mint_pack "$WORK_DIR/pack-2029.json" "$WORK_DIR/b9-newpack.pack")"
+    verify_and_expect "$WORK_DIR/b9-newpack.pack" "$b9_new_anchor" \
+        "2030-05-07T10:00:00Z" 1 \
+        "B9 Vienna bike's current pack — unaffected by the recall (degraded only by freshness; safety clean)"
+
+    what "the current pack's only degradation is freshness — its safety finding is clean; degradation is explicit, never silent."
+
+    what "the recall reached the graph, not a list: computational, privacy-preserving — and the manufacturer receives aggregates."
+
+    # =====================================================================
+    beat "B10" "End of life (the material loop closes)"
+    # =====================================================================
+    what "E13 decompose = inverse transformation 1 -> N into material passports with mass balance; end-of-waste is a NEW passport issuance."
+
+    issuer_create "local:recycler:scrap-steel/J-000842" - S0 steelworks-linz \
+        "https://resolver.unidpp.org/r/scrap-steel-j000842" \
+        "$SCRAP_URN" "$WORK_DIR/scrap-steel.json"
+    issuer_create "local:recycler:pack-material/J-000842" - S0 recycler-linz \
+        "https://resolver.unidpp.org/r/recycle-pack-j000842" \
+        "$RECYCLE_URN" "$WORK_DIR/recycle-pack.json"
+
+    issuer_event "$WORK_DIR/e8-instance.json" decompose \
+        "$(decompose_data)" \
+        recycler-linz recycler "2033-07-14T09:00:00Z"
+
+    issuer_event "$WORK_DIR/scrap-steel.json" end-of-waste \
+        '{"evidence_ref":"eow-cert-linz-2033-0742","outputs":[]}' \
+        steelworks-linz "accredited actor" "2033-07-15T08:00:00Z"
+
+    b10_scrap_anchor="$(issuer_mint_pack "$WORK_DIR/scrap-steel.json" "$WORK_DIR/b10-scrap.pack")"
+    verify_and_expect "$WORK_DIR/b10-scrap.pack" "$b10_scrap_anchor" \
+        "2033-07-15T09:00:00Z" 1 \
+        "B10 end-of-waste scrap passport — DEGRADED by status (waste regime re-entry), not by trust: the moment scrap legally re-qualifies"
+
+    b10_bike_anchor="$(issuer_mint_pack "$WORK_DIR/e8-instance.json" "$WORK_DIR/b10-bike.pack")"
+    verify_and_expect "$WORK_DIR/b10-bike.pack" "$b10_bike_anchor" \
+        "2033-07-15T09:00:00Z" 1 \
+        "B10 decomposed bike — transformed: degraded-with-reason under archival semantics" \
+        "--max-age 0"
+
+    mass_balance
+
+    what "circularity became auditable arithmetic: in - out = loss; recycled-content claims compute from the graph."
+
+    # =====================================================================
+    hr "STORY COMPLETE — B1 through B10"
+    # =====================================================================
+    say "checks:   $CHECKS_OK/$CHECKS_TOTAL passed"
+    say "artifacts: $WORK_DIR (passports, packs, registry responses)"
+    if [ "$FAILED" -gt 0 ] || [ "$CHECKS_OK" != "$CHECKS_TOTAL" ]; then
+        printf '\033[31mDEMO FAILED (%s failing checks)\033[0m\n' "$FAILED"
+        exit 1
+    fi
+    printf '\033[32mDEMO PASSED — all verify outcomes matched the story.\033[0m\n'
+}
+
+# Mirror the console output into the transcript. Process substitution —
+# not a pipeline — keeps `main` in THIS shell: the variables it sets
+# (REGISTRY_PID) must survive so the EXIT trap can stop the services it
+# started (a pipeline subshell would orphan them). The work dir must
+# exist before tee opens the file.
+mkdir -p "$WORK_DIR"
+exec > >(tee "$TRANSCRIPT") 2>&1
+main "$@"
+exit $?

@@ -1,0 +1,57 @@
+# Optional compose: build the sibling Rust services inside their own
+# directories. The `registry` profile is the default; the `issuer`
+# profile is activated by `docker compose --profile issuer up`. Until
+# each sibling repo ships its own Dockerfile (TODO #17 hygiene for
+# `unidpp-registry`; `unidpp-issuer` once TODO #10 lands), bind mounts
+# run `cargo build --release && cargo run --release` inside the rust
+# image — slow on first build, instant on subsequent ones thanks to a
+# named cargo cache volume.
+#
+# Usage:
+#   docker compose up -d registry                  # start the registry only
+#   docker compose --profile issuer up -d         # also start the issuer
+#   make demo UNIDPP_REGISTRY_URL=http://localhost:8098 \
+#                 UNIDPP_ISSUER_URL=http://localhost:8096
+#
+# Both services share the host's loopback ports (8098 / 8096) by host
+# binding; change the port mappings below to suit.
+
+services:
+  registry:
+    image: rust:1.83-slim
+    working_dir: /src/unidpp-registry
+    volumes:
+      - ../unidpp-registry:/src/unidpp-registry
+      - registry-target:/src/unidpp-registry/target
+    environment:
+      - UNIDPP_REGISTRY_BIND=0.0.0.0:8090
+    command: ["bash", "-lc", "cargo build --release && ./target/release/unidpp-registry"]
+    ports:
+      - "8098:8090"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  issuer:
+    image: rust:1.83-slim
+    working_dir: /src/unidpp-issuer
+    profiles: ["issuer"]
+    volumes:
+      - ../unidpp-issuer:/src/unidpp-issuer
+      - issuer-target:/src/unidpp-issuer/target
+    environment:
+      - UNIDPP_ISSUER_BIND=0.0.0.0:8090
+    command: ["bash", "-lc", "cargo build --release && ./target/release/unidpp-issuer"]
+    ports:
+      - "8096:8090"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  registry-target:
+  issuer-target:
