@@ -12,6 +12,10 @@
 #      instead of fabricating a PASS.
 #   4. Registry as-of: the EU lens binds for the bike type ref AFTER
 #      2028-02-01 and not before (the dated-binding machinery).
+#   5. Live services: registry + issuer + trust + log all run for
+#      real; a B1-B4 subset verifies with the anchor pinned from the
+#      trust service's /keyring and anchors packs in the log. SKIPS
+#      (not fails) when the sibling binaries cannot be produced.
 #
 # A failing assertion prints the diagnostic and the script returns the
 # assertion's exit status. `make test` chains them; a single failure
@@ -28,6 +32,7 @@ UNIDPP="${UNIDPP_BIN:-$ROOT_DIR/../unidpp-cli/target/release/unidpp}"
 
 pass=0
 fail=0
+skipped=0
 
 assert() { # assert <description> <expected> <actual>
     assert_desc="$1"
@@ -207,6 +212,75 @@ test_registry_binding() {
     assert "EU profiles bound after 2028-02-01" 1 "$n_2028"
 }
 
+# ---------------------------------------------------------------------------
+# Test 5: live services — B1+B4 subset against registry+issuer+trust+log
+# ---------------------------------------------------------------------------
+
+test_live_services() {
+    printf '\n\033[1m== test 5 ==\033[0m  live services: B1-B4 subset over registry + issuer + trust + log\n'
+
+    # The live test needs the three service binaries on top of the CLI
+    # and registry the earlier tests already built. Build any missing
+    # one; SKIP (not FAIL) when a binary cannot be produced — the
+    # sibling repos are developed in parallel and can be mid-edit.
+    for live_repo in unidpp-issuer unidpp-trust unidpp-log; do
+        live_bin="$ROOT_DIR/../$live_repo/target/release/$live_repo"
+        [ -x "$live_bin" ] && continue
+        printf '  ....... building missing %s\n' "$live_repo"
+        cargo build --release --manifest-path \
+            "$ROOT_DIR/../$live_repo/Cargo.toml" >/dev/null 2>&1 || true
+    done
+    for live_repo in unidpp-issuer unidpp-trust unidpp-log; do
+        live_bin="$ROOT_DIR/../$live_repo/target/release/$live_repo"
+        if [ ! -x "$live_bin" ]; then
+            printf '  \033[33m[SKIP]\033[0m live test: %s binary unavailable (build failed or repo absent)\n' \
+                "$live_repo"
+            skipped=$((skipped + 1))
+            return 0
+        fi
+    done
+
+    live_work="$TEST_WORK/live"
+    rm -rf "$live_work"
+    if ! UNIDPP_E2E_LIVE_DIR="$live_work" UNIDPP_E2E_STOP_AFTER=B4 \
+        "$ROOT_DIR/scripts/demo-live.sh" \
+        >"$TEST_WORK/demo-live.stdout" 2>"$TEST_WORK/demo-live.stderr"; then
+        printf '  \033[31m[FAIL]\033[0m demo-live.sh exited non-zero; tail of stderr:\n'
+        tail -25 "$TEST_WORK/demo-live.stderr"
+        fail=$((fail + 1))
+        return 1
+    fi
+
+    transcript="$live_work/e2e/transcript.txt"
+    [ -f "$transcript" ] || { printf '  [FAIL] no live transcript\n'; fail=$((fail + 1)); return 1; }
+    plain="$TEST_WORK/transcript-live.plain.txt"
+    sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g' "$transcript" >"$plain"
+
+    assert_grep "live topology header present" "$plain" 'topology: LIVE'
+    assert_grep "topology lists the registry" "$plain" 'registry : http'
+    assert_grep "topology lists the issuer" "$plain" 'issuer   : http.*server-minted packs'
+    assert_grep "topology lists the trust service" "$plain" 'trust    : http.*verify anchor source'
+    assert_grep "topology lists the log" "$plain" 'log      : http.*signed receipts'
+    assert_grep "trust anchor pinned from /keyring" "$plain" 'anchor pinned from .*/keyring'
+    assert_grep "issuer and trust anchors identical" "$plain" '\[ok\].*issuer pack anchor == trust-pinned anchor'
+    assert_grep "B4 verify PASS under the live anchor" "$plain" 'B4 border moment.*(PASS|== 0)'
+    assert_grep "log receipts narrated with ids" "$plain" 'log: +receipt [0-9]+ '
+    assert_grep "live subset completed" "$plain" 'DEMO PASSED'
+
+    # Independent receipt check, outside the orchestrator: the stored
+    # B4 receipt's commitment must equal the sha256 of the pack file.
+    receipt="$live_work/e2e/log-receipts/b4-border.receipt.json"
+    pack="$live_work/e2e/b4-border.pack"
+    if [ -f "$receipt" ] && [ -f "$pack" ]; then
+        want="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$pack")"
+        got="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["commitment"])' "$receipt")"
+        assert "b4 log receipt commitment == sha256(pack)" "$want" "$got"
+    else
+        printf '  \033[31m[FAIL]\033[0m missing b4 receipt or pack artifact\n'
+        fail=$((fail + 1))
+    fi
+}
+
 main() {
     mkdir -p "$TEST_WORK"
 
@@ -214,8 +288,10 @@ main() {
     test_tamper_detection
     test_missing_anchor
     test_registry_binding
+    test_live_services
 
-    printf '\n\033[1m== summary ==\033[0m  %d passed, %d failed\n' "$pass" "$fail"
+    printf '\n\033[1m== summary ==\033[0m  %d passed, %d failed, %d skipped\n' \
+        "$pass" "$fail" "$skipped"
     [ "$fail" = 0 ]
 }
 

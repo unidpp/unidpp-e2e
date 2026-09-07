@@ -15,8 +15,8 @@ $ make demo
 
 UniDPP end-to-end — the Momiji Mobility E8 (STORY.md beats B1-B10)
  run: 2026-09-07T07:59:18Z
- issuance: unidpp-cli — the unidpp-issuer service binary is
- not present yet; scripts/issuer-hook.sh switches to it automatically
+ issuance: unidpp-cli (local driver) — set UNIDPP_ISSUER_URL or run
+ make demo-live to issue through the unidpp-issuer service
 
 [orchestrator] starting unidpp-registry on 127.0.0.1:8098
  unidpp-registry healthy at http://127.0.0.1:8098 (19135 item service, )
@@ -75,13 +75,14 @@ The full annotated transcript is in `build/e2e/transcript.txt`.
 
 ```
 unidpp-e2e/
-├── Makefile demo | test | deps | up (compose) | down | clean
+├── Makefile demo | demo-live | test | deps | deps-live | up (compose) | down | clean
 ├── docker-compose.yml optional: registry + (profile=issuer) issuer
 ├── scripts/
 │ ├── demo.sh the orchestrator (~700 lines, shellcheck-clean)
+│ ├── demo-live.sh starts ALL four sibling services, then runs demo.sh
 │ └── issuer-hook.sh SINGLE clearly-marked issuer integration point
 └── tests/
- └── run_tests.sh the shell test harness (4 tests)
+ └── run_tests.sh the shell test harness (5 tests)
 ```
 
 The sibling repos (`../unidpp-registry`, `../unidpp-cli`,
@@ -91,10 +92,14 @@ unippp workspace layout.
 ## Running
 
 ```sh
-# Run the demo end to end.
+# Run the demo end to end (CLI driver + local registry).
 make demo
 
-# Run the test harness (happy path + tamper + missing-anchor + registry).
+# Run the demo against ALL FOUR live sibling services.
+make demo-live
+
+# Run the test harness (happy path + tamper + missing-anchor + registry
+# + a live-service B1-B4 smoke).
 make test
 ```
 
@@ -110,6 +115,12 @@ Useful environment variables:
 | `UNIDPP_ISSUER_URL` | unset | activates the `unidpp-issuer` service mode |
 | `UNIDPP_ISSUER_BIND` | `127.0.0.1:8096` | issuer bind address when starting locally |
 | `UNIDPP_ISSUER_ADMIN_TOKEN` | unset (open) | bearer token sent to the issuer when set |
+| `UNIDPP_TRUST_URL` | unset | fetch the verify anchor from the trust service's `GET /keyring` instead of the mint-returned fixture anchor (issuer mode required — the pinned key must cover the pack signer) |
+| `UNIDPP_TRUST_BIND` | `127.0.0.1:8092` | trust bind address in `demo-live` |
+| `UNIDPP_LOG_URL` | unset | anchor every minted pack's commitment in the transparency log (`POST /commitments`); signed receipts land in `<work>/log-receipts/` |
+| `UNIDPP_LOG_BIND` | `127.0.0.1:8194` | log bind address in `demo-live` (not `:8092` — that port is trust's) |
+| `UNIDPP_E2E_LIVE_DIR` | `build/live` | where `demo-live` keeps service journals + artifacts |
+| `UNIDPP_E2E_STOP_AFTER` | unset | `B4` exits after the border moment (the live smoke subset) |
 | `UNIDPP_E2E_WORK_DIR` | `build/e2e` | where artifacts land |
 
 ### Compose
@@ -123,26 +134,90 @@ make demo UNIDPP_REGISTRY_URL=http://localhost:8098 \
  UNIDPP_ISSUER_URL=http://localhost:8096
 ```
 
-## Integration status — what waits on the issuer binary
+## Live topology — `make demo-live`
+
+`scripts/demo-live.sh` starts **all four sibling services** on distinct
+loopback ports, each with its JSONL journal under `build/live/`, waits
+for every `/healthz`, then hands the whole B1–B10 story to `demo.sh`
+with the live URLs exported:
+
+```
+                 make demo-live  (scripts/demo-live.sh)
+                                |
+        +--------------+---------+----------+--------------+
+        |              |         |          |              |
+  unidpp-registry  unidpp-issuer  unidpp-trust        unidpp-log
+  127.0.0.1:8098   127.0.0.1:8096  127.0.0.1:8092     127.0.0.1:8194
+  items,            server-signed  verify anchors     transparency log
+  applicability,    events,        (GET /keyring)     (POST /commitments)
+  transforms        server-minted                     -> signed receipts
+        |           packs             |                     |
+        |                             |                     |
+        |   B2/B3  items + applicability bindings           |
+        |<---------------- demo.sh (the E8 story) ---------->|
+        |                             |                     |
+        |   B1-B10 POST /passports, /events, /pack          |
+        |<-----------------------------                     |
+        |                             |                     |
+        |   verify steps pin the anchor from the trust      |
+        |   service: GET /keyring -> --anchor               |
+        |                             |--> (CLI verify)     |
+        |   every minted pack's sha256 anchors in the log   |
+        |                             |-------------------->|
+        |                             |   receipts: build/live/e2e/log-receipts/
+```
+
+Three things only the live run proves:
+
+- **Issuance is server-side.** Events and packs come from the
+  issuer's real HTTP API (`POST /passports/{id}/events`, `/pack`) —
+  the CLI driver is not in the issuance path.
+- **The verify anchor is pinned, not fixture-derived.** When
+  `UNIDPP_TRUST_URL` is set, every verify step passes the public key
+  fetched from the trust service's `GET /keyring` (role
+  `sign-ecdsa-p256`) as `--anchor`. The pinned key covers the
+  issuer's pack signer because both services derive it from the same
+  ceremony seed in env-key mode (`UNIDPP_TRUST_SIGN_SEED_P256` ==
+  `UNIDPP_ISSUER_PACK_SEED` in `demo-live.sh`; production pins issuer
+  keys through jurisdiction trust lists). Beat B4 asserts the
+  issuer-printed anchor and the trust-pinned anchor are
+  byte-identical, so a seed drift fails the demo loudly.
+- **Packs leave a public, repudiable trail.** When `UNIDPP_LOG_URL`
+  is set, every minted pack's SHA-256 is anchored in the transparency
+  log (`POST /commitments`); the signed inclusion receipt is stored
+  under `build/live/e2e/log-receipts/`, its id narrated in the
+  transcript, its commitment echoed back and checked, and
+  `GET /receipt/{seq}` asserted byte-identical.
+
+Journals are wiped at each `demo-live` start (fresh sequencing, so
+receipt ids stay deterministic across re-runs). The services are
+stopped on exit; `make demo-live UNIDPP_TRUST_BIND=…` etc. moves any
+of them.
+
+## Integration status
 
 | Piece | Source | Status |
 |---|---|---|
 | `unidpp-registry` | `../unidpp-registry` | Available. Axum service, 19135 items + 6 subregisters, JSONL journal, 17 unit + 7 integration tests. |
 | `unidpp-cli` | `../unidpp-cli` | Available (default driver). Real ECDSA-P256 pack signatures, 50 unit + 14 integration tests. |
 | `unidpp-issuer` | `../unidpp-issuer` | Optional. When `UNIDPP_ISSUER_URL` is set, events and packs are issued via the HTTP API. |
-| `unidpp-trust`, `unidpp-resolver`, `unidpp-py`, … | sibling repos | not in scope for the demo. |
+| `unidpp-trust` | `../unidpp-trust` | Wired (`make demo-live`). `GET /keyring` supplies the pinned verify anchor; jurisdiction trust lists, master list, revocations available for future beats. |
+| `unidpp-log` | `../unidpp-log` | Wired (`make demo-live`). `POST /commitments` anchors every minted pack; signed inclusion receipts asserted + stored. |
+| `unidpp-resolver`, `unidpp-py`, … | sibling repos | not in scope for the demo. |
 
 The `scripts/issuer-hook.sh` file is the **single, clearly-marked issuer
 integration point**: every issuance step in the demo goes through its
-three verbs (`issuer_create`, `issuer_event`, `issuer_mint_pack`). When
-the issuer binary lands, switch modes by setting `UNIDPP_ISSUER_URL=…`
+three verbs (`issuer_create`, `issuer_event`, `issuer_mint_pack`). The
+CLI driver is the default; switch modes by setting `UNIDPP_ISSUER_URL=…`
 (the hook then auto-starts the binary if none is listening, drives the
 whole story through its real HTTP API, and syncs the local mirror
 documents after each call). Nothing else in the orchestrator changes.
+`make demo-live` is the one-command form: all four services, live
+anchors, live receipts.
 
 ## Tests
 
-`make test` runs four checks against a freshly-built demo:
+`make test` runs five checks against a freshly-built demo:
 
 1. **Happy path.** The E8 demo runs end-to-end; the transcript contains
  every STORY beat label B1–B10 and the story-expected verify outcomes.
@@ -153,6 +228,12 @@ documents after each call). Nothing else in the orchestrator changes.
  never silently PASSes.
 4. **Registry dated binding.** EU profile applicability is empty before
  2028-02-01 and non-empty after — the dated-binding machinery.
+5. **Live services.** `demo-live.sh` spawns registry + issuer + trust +
+ log; a B1–B4 subset runs with server-side issuance, the anchor pinned
+ from the trust service's `/keyring` (asserted byte-identical to the
+ issuer's pack anchor) and pack commitments anchored in the log; B4's
+ verify must exit **0** under the live anchor. The test **SKIPS** (not
+ fails) when the sibling binaries cannot be built (a repo mid-edit).
 
 ## Conventions
 

@@ -14,6 +14,12 @@
 # Issuance goes through scripts/issuer-hook.sh — today driven by the
 # unidpp-cli , automatically switching to the unidpp-issuer
 # service  once its binary exists (see that file).
+#
+# LIVE mode (make demo-live / scripts/demo-live.sh): all four sibling
+# services run for real — UNIDPP_ISSUER_URL (server-signed events,
+# server-minted packs), UNIDPP_TRUST_URL (verify anchors pinned from
+# GET /keyring), UNIDPP_LOG_URL (every minted pack's commitment
+# anchored in the transparency log; receipts kept + narrated).
 
 set -u
 set -o pipefail
@@ -27,6 +33,21 @@ UNIDPP="${UNIDPP_BIN:-$FAMILY_DIR/unidpp-cli/target/release/unidpp}"
 REGISTRY_BIN="${UNIDPP_REGISTRY_BIN:-$FAMILY_DIR/unidpp-registry/target/release/unidpp-registry}"
 REGISTRY_BIND="${UNIDPP_REGISTRY_BIND:-127.0.0.1:8098}"
 REGISTRY_URL="${UNIDPP_REGISTRY_URL:-http://$REGISTRY_BIND}"
+
+# Live-service wiring (make demo-live / scripts/demo-live.sh):
+#   UNIDPP_TRUST_URL — verify anchors are pinned from the trust
+#     service's GET /keyring instead of the mint-returned fixture
+#     anchor (see pin_trust_anchor);
+#   UNIDPP_LOG_URL — every minted pack's commitment is anchored in
+#     the transparency log (POST /commitments) and the signed
+#     inclusion receipt is stored + narrated (see log_anchor_pack).
+TRUST_URL="${UNIDPP_TRUST_URL:-}"
+LOG_URL="${UNIDPP_LOG_URL:-}"
+TRUST_ANCHOR=""
+TRUST_KEY_ID=""
+TRUST_MODE=""
+LOG_ID=""
+LOG_RECEIPTS="$WORK_DIR/log-receipts"
 
 # STORY cast (STORY.md section 0 — the identities of every beat).
 BIKE_ID="local:momiji:e8/J-000842"
@@ -120,6 +141,103 @@ python3_count() { # python3_count <file> <field>
 import json, sys
 print(len(json.load(open(sys.argv[1]))[sys.argv[2]]))
 PYEOF
+}
+
+# Extract a dotted JSON path (one nesting level per dot) with python3.
+json_path() { # json_path <file> <dotted.path>
+    python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+for part in sys.argv[2].split("."):
+    doc = doc[part]
+if isinstance(doc, (dict, list)):
+    print(json.dumps(doc))
+else:
+    print(doc)
+PYEOF
+}
+
+# SHA-256 of a file's exact bytes, hex (the commitment we anchor in
+# the transparency log).
+sha256_hex() { # sha256_hex <file>
+    python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
+}
+
+# ---------------------------------------------------------------------------
+# Live trust service — pin the verify anchor from GET /keyring
+# ---------------------------------------------------------------------------
+
+# When UNIDPP_TRUST_URL is set (and issuance runs through the issuer
+# service), fetch the public anchor a verifier pins from the trust
+# service's /keyring — role sign-ecdsa-p256 — and use it as the
+# `--anchor` of every verify step below, instead of the anchor each
+# pack mint prints. The pinned key covers the issuer's pack signer
+# because both services derive it from the same ceremony seed
+# (scripts/demo-live.sh aligns UNIDPP_TRUST_SIGN_SEED_P256 with
+# UNIDPP_ISSUER_PACK_SEED); B4 asserts the two anchors are
+# byte-identical, so a seed drift fails the demo loudly.
+pin_trust_anchor() {
+    [ -n "$TRUST_URL" ] || return 0
+    if [ "$(detect_issuer_mode)" != issuer ]; then
+        note "UNIDPP_TRUST_URL set but issuance is CLI-driven — the trust-pinned"
+        note "anchor covers the issuer's pack signer; keeping the mint-returned anchors"
+        return 0
+    fi
+    show "GET $TRUST_URL/keyring"
+    curl -sf "$TRUST_URL/keyring" >"$WORK_DIR/trust-keyring.json" \
+        || fail "trust /keyring unreachable on $TRUST_URL"
+    TRUST_ANCHOR="$(json_path "$WORK_DIR/trust-keyring.json" roles.sign-ecdsa-p256.public)"
+    TRUST_KEY_ID="$(json_path "$WORK_DIR/trust-keyring.json" roles.sign-ecdsa-p256.key_id)"
+    TRUST_MODE="$(json_path "$WORK_DIR/trust-keyring.json" mode)"
+    [ -n "$TRUST_ANCHOR" ] || fail "trust /keyring carried no sign-ecdsa-p256 public anchor"
+    say "trust:    anchor pinned from $TRUST_URL/keyring"
+    say "          role sign-ecdsa-p256, key id $TRUST_KEY_ID ($TRUST_MODE mode)"
+    say "          every verify below passes this pinned key as --anchor"
+}
+
+# Read the transparency-log identity once (UNIDPP_LOG_URL mode).
+probe_log() {
+    [ -n "$LOG_URL" ] || return 0
+    show "GET $LOG_URL/tree/head"
+    curl -sf "$LOG_URL/tree/head" >"$WORK_DIR/log-head.json" \
+        || fail "log /tree/head unreachable on $LOG_URL"
+    LOG_ID="$(json_get "$WORK_DIR/log-head.json" log_id)"
+    say "log:      $LOG_URL (log id $LOG_ID) — every minted pack anchors here"
+}
+
+# Anchor a minted pack's commitment in the live transparency log:
+# POST /commitments {subject, sha256(pack)}; assert the receipt's
+# commitment echoes ours and that GET /receipt/{seq} re-serves it
+# byte-identically; store the signed receipt and narrate its id.
+log_anchor_pack() { # log_anchor_pack <pack-file> <label> <subject>
+    [ -n "$LOG_URL" ] || return 0
+    lap_file="$1"
+    lap_label="$2"
+    lap_subject="$3"
+    mkdir -p "$LOG_RECEIPTS"
+    lap_hash="$(sha256_hex "$lap_file")"
+    show "POST $LOG_URL/commitments  (subject $lap_subject, commitment = sha256 of $(basename "$lap_file"))"
+    printf '{"subject":"%s","commitment":"%s"}' "$lap_subject" "$lap_hash" \
+        >"$LOG_RECEIPTS/$lap_label.request.json"
+    curl -sSf -X POST "$LOG_URL/commitments" \
+        -H 'content-type: application/json' \
+        --data @"$LOG_RECEIPTS/$lap_label.request.json" \
+        >"$LOG_RECEIPTS/$lap_label.receipt.json" \
+        || fail "log refused the $lap_label pack commitment"
+    rm -f "$LOG_RECEIPTS/$lap_label.request.json"
+    lap_rid="$(json_get "$LOG_RECEIPTS/$lap_label.receipt.json" receipt_id)"
+    lap_seq="$(json_get "$LOG_RECEIPTS/$lap_label.receipt.json" seq)"
+    lap_size="$(json_path "$LOG_RECEIPTS/$lap_label.receipt.json" tree_head.tree_size)"
+    check "log receipt commitment echoes pack hash ($lap_label)" \
+        "$lap_hash" "$(json_get "$LOG_RECEIPTS/$lap_label.receipt.json" commitment)"
+    curl -sf "$LOG_URL/receipt/$lap_seq" >"$LOG_RECEIPTS/$lap_label.reserved.json"
+    if cmp -s "$LOG_RECEIPTS/$lap_label.receipt.json" "$LOG_RECEIPTS/$lap_label.reserved.json"; then
+        check "log receipt $lap_rid re-served byte-identically" ok ok
+    else
+        check "log receipt $lap_rid re-served byte-identically" ok changed
+    fi
+    rm -f "$LOG_RECEIPTS/$lap_label.reserved.json"
+    say "log:      receipt $lap_rid (seq $lap_seq, tree size $lap_size) — GET $LOG_URL/receipt/$lap_seq"
 }
 
 # ---------------------------------------------------------------------------
@@ -219,6 +337,13 @@ verify_and_expect() { # verify_and_expect <pack> <anchor> <as-of> <expected> <wh
     ve_why="$5"
     shift 5
     ve_extra="$*"
+
+    # Live trust mode: the anchor is the one pinned from the trust
+    # service's /keyring (pin_trust_anchor); the per-pack argument
+    # stays as the CLI-driver fallback.
+    if [ -n "$TRUST_ANCHOR" ]; then
+        ve_anchor="$TRUST_ANCHOR"
+    fi
 
     case "$ve_expected" in
         0) ve_expected_label="pass" ;;
@@ -355,11 +480,35 @@ main() {
     if [ "$issuer_driver" = issuer ]; then
         say "issuance: unidpp-issuer service  at $ISSUER_URL"
     else
-        say "issuance: unidpp-cli  — the unidpp-issuer service binary is"
-        say "not present yet; scripts/issuer-hook.sh switches to it automatically"
+        say "issuance: unidpp-cli (local driver) — set UNIDPP_ISSUER_URL or run"
+        say "make demo-live to issue through the unidpp-issuer service"
     fi
 
     start_registry
+
+    # Live-service mode: pin the verify anchor from the trust service
+    # and identify the transparency log before the story starts, so
+    # the transcript names every dependency up front.
+    pin_trust_anchor
+    probe_log
+
+    if [ -n "${UNIDPP_ISSUER_URL:-}$TRUST_URL$LOG_URL" ]; then
+        if [ -n "$TRUST_URL" ] && [ -n "$LOG_URL" ] && [ "$issuer_driver" = issuer ]; then
+            say "topology: LIVE — four sibling services (started by scripts/demo-live.sh)"
+        else
+            say "topology: LIVE (partial — live service URLs detected)"
+        fi
+        say "  registry : $REGISTRY_URL (items, applicability, transforms)"
+        if [ "$issuer_driver" = issuer ]; then
+            say "  issuer   : $ISSUER_URL (server-signed events, server-minted packs)"
+        fi
+        if [ -n "$TRUST_URL" ]; then
+            say "  trust    : $TRUST_URL (verify anchor source: GET /keyring)"
+        fi
+        if [ -n "$LOG_URL" ]; then
+            say "  log      : $LOG_URL (pack commitments -> signed receipts)"
+        fi
+    fi
 
     # =====================================================================
     beat "B1" "Assembly in Kyoto (issuance where duty attaches)"
@@ -479,14 +628,37 @@ main() {
     what "the officer's terminal verifies the signed Tier-A pack OFFLINE — nothing is fetched — and the three readings print."
 
     b4_anchor="$(issuer_mint_pack "$WORK_DIR/e8-instance.json" "$WORK_DIR/b4-border.pack")"
-    say "issuer pins anchor (public key, hex): $b4_anchor"
+    if [ -n "$TRUST_ANCHOR" ]; then
+        say "issuer pins anchor (public key, hex): $b4_anchor"
+        say "verifier pins anchor from unidpp-trust /keyring: $TRUST_ANCHOR"
+        check "issuer pack anchor == trust-pinned anchor" "$TRUST_ANCHOR" "$b4_anchor"
+    else
+        say "issuer pins anchor (public key, hex): $b4_anchor"
+    fi
     say "officer terminal: offline (Shenzhen host unreachable, EU registry mid-outage)"
 
     verify_and_expect "$WORK_DIR/b4-border.pack" "$b4_anchor" \
         "2028-02-15T09:30:00Z" 0 \
         "B4 border moment — PASS, as-of stamped, coverage states what was not reachable"
 
+    log_anchor_pack "$WORK_DIR/b4-border.pack" b4-border "$BIKE_URN"
+
     what "verdict PASS with the three readings named (cryptographic / evidentiary / current-state) and full field coverage — honesty is the feature."
+
+    # Optional subset exit (tests/run_tests.sh test 5 drives B1 + B4
+    # against the live services): the minimum live circuit is issuance
+    # (B1) plus an offline verify under the trust-pinned anchor (B4).
+    if [ "${UNIDPP_E2E_STOP_AFTER:-}" = B4 ]; then
+        hr "SUBSET COMPLETE — B1 through B4 (UNIDPP_E2E_STOP_AFTER=B4)"
+        say "checks:   $CHECKS_OK/$CHECKS_TOTAL passed"
+        say "artifacts: $WORK_DIR"
+        if [ "$FAILED" -gt 0 ] || [ "$CHECKS_OK" != "$CHECKS_TOTAL" ]; then
+            printf '\033[31mDEMO FAILED (%s failing checks)\033[0m\n' "$FAILED"
+            exit 1
+        fi
+        printf '\033[32mDEMO PASSED — B1-B4 subset (live smoke).\033[0m\n'
+        return 0
+    fi
 
     # =====================================================================
     beat "B5" "Life in service (edge state, capability classes)"
@@ -536,6 +708,7 @@ main() {
     verify_and_expect "$WORK_DIR/b6-derestricted.pack" "$b6_anchor" \
         "2029-06-20T10:00:00Z" 2 \
         "B6 derestriction — the modified machine is legally an unregistered moped (expected FAIL: non-conformant)"
+    log_anchor_pack "$WORK_DIR/b6-derestricted.pack" b6-derestricted "$BIKE_URN"
 
     # The dongle comes off at the next dealer visit; re-evaluation passes.
     issuer_event "$WORK_DIR/e8-instance.json" product.modify \
@@ -585,6 +758,7 @@ main() {
     verify_and_expect "$WORK_DIR/b7-newpack.pack" "$b7_anchor" \
         "2029-09-12T11:00:00Z" 0 \
         "B7 new pack (post-swap) — issued, no flags"
+    log_anchor_pack "$WORK_DIR/b7-newpack.pack" b7-newpack "$NEWPACK_URN"
 
     what "cross-jurisdiction install: both profiles survive the swap; the used-parts market keeps provenance the EN pipeline loses silently."
 
@@ -611,6 +785,7 @@ main() {
     verify_and_expect "$WORK_DIR/b8-auction.pack" "$b8_anchor" \
         "2031-03-10T16:00:00Z" 0 \
         "B8 post-auction — the audit trail survives without a central watcher"
+    log_anchor_pack "$WORK_DIR/b8-auction.pack" b8-auction "$BIKE_URN"
 
     what "enumeration resistance is a system property: the audit trail survives; the surveillance does not exist."
 
@@ -636,11 +811,13 @@ main() {
     verify_and_expect "$WORK_DIR/b9-oldpack.pack" "$b9_old_anchor" \
         "2030-05-07T10:00:00Z" 2 \
         "B9 original pack — REACHED through its own log (expected FAIL: recall active)"
+    log_anchor_pack "$WORK_DIR/b9-oldpack.pack" b9-oldpack "$PACK_URN"
 
     b9_new_anchor="$(issuer_mint_pack "$WORK_DIR/pack-2029.json" "$WORK_DIR/b9-newpack.pack")"
     verify_and_expect "$WORK_DIR/b9-newpack.pack" "$b9_new_anchor" \
         "2030-05-07T10:00:00Z" 1 \
         "B9 Vienna bike's current pack — unaffected by the recall (degraded only by freshness; safety clean)"
+    log_anchor_pack "$WORK_DIR/b9-newpack.pack" b9-newpack "$NEWPACK_URN"
 
     what "the current pack's only degradation is freshness — its safety finding is clean; degradation is explicit, never silent."
 
@@ -670,12 +847,14 @@ main() {
     verify_and_expect "$WORK_DIR/b10-scrap.pack" "$b10_scrap_anchor" \
         "2033-07-15T09:00:00Z" 1 \
         "B10 end-of-waste scrap passport — DEGRADED by status (waste regime re-entry), not by trust: the moment scrap legally re-qualifies"
+    log_anchor_pack "$WORK_DIR/b10-scrap.pack" b10-scrap "$SCRAP_URN"
 
     b10_bike_anchor="$(issuer_mint_pack "$WORK_DIR/e8-instance.json" "$WORK_DIR/b10-bike.pack")"
     verify_and_expect "$WORK_DIR/b10-bike.pack" "$b10_bike_anchor" \
         "2033-07-15T09:00:00Z" 1 \
         "B10 decomposed bike — transformed: degraded-with-reason under archival semantics" \
         "--max-age 0"
+    log_anchor_pack "$WORK_DIR/b10-bike.pack" b10-bike "$BIKE_URN"
 
     mass_balance
 
@@ -686,6 +865,13 @@ main() {
     # =====================================================================
     say "checks:   $CHECKS_OK/$CHECKS_TOTAL passed"
     say "artifacts: $WORK_DIR (passports, packs, registry responses)"
+    if [ -n "$LOG_URL" ] && [ -d "$LOG_RECEIPTS" ]; then
+        receipt_count=0
+        for receipt_file in "$LOG_RECEIPTS"/*.receipt.json; do
+            [ -e "$receipt_file" ] && receipt_count=$((receipt_count + 1))
+        done
+        say "log:      $receipt_count signed inclusion receipts in $LOG_RECEIPTS"
+    fi
     if [ "$FAILED" -gt 0 ] || [ "$CHECKS_OK" != "$CHECKS_TOTAL" ]; then
         printf '\033[31mDEMO FAILED (%s failing checks)\033[0m\n' "$FAILED"
         exit 1

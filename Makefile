@@ -1,4 +1,4 @@
-.PHONY: help demo test clean deps deps-cli deps-registry deps-issuer up down status
+.PHONY: help demo demo-live test clean deps deps-cli deps-registry deps-issuer deps-trust deps-log deps-live up down status
 
 HELP_WIDTH = 18
 help:                       ## Show this help.
@@ -7,10 +7,15 @@ help:                       ## Show this help.
 demo: deps                  ## Walk the ten STORY.md beats end to end.
 	./scripts/demo.sh
 
+demo-live: deps-live        ## Walk B1-B10 against the four LIVE sibling services.
+	./scripts/demo-live.sh
+
 test:                       ## Run the shell test harness (happy path + tamper tests).
 	./tests/run_tests.sh
 
 deps: deps-cli deps-registry ## Build every dependent binary (release).
+
+deps-live: deps-cli deps-registry deps-issuer deps-trust deps-log ## Build every live-service binary (release).
 
 # The sibling repos are developed in parallel; a rebuild can fail while
 # a sibling is mid-edit. When that happens we fall back to the existing
@@ -29,9 +34,32 @@ deps-registry:              ## Build unidpp-registry (release).
 
 deps-issuer:                ## Build unidpp-issuer when its source is present.
 	@if [ -d ../unidpp-issuer/src ] && [ -n "$$(ls -A ../unidpp-issuer/src 2>/dev/null)" ]; then \
-		cargo build --release --manifest-path ../unidpp-issuer/Cargo.toml; \
+		if cargo build --release --manifest-path ../unidpp-issuer/Cargo.toml; then :; \
+		elif [ -x ../unidpp-issuer/target/release/unidpp-issuer ]; then \
+			echo "warning: unidpp-issuer rebuild failed (repo mid-edit); using existing binary"; \
+		else echo "error: unidpp-issuer has no binary and the build failed" >&2; exit 1; fi; \
 	else \
 		echo "unidpp-issuer source not yet present ; skipping build."; \
+	fi
+
+deps-trust:                 ## Build unidpp-trust when its source is present.
+	@if [ -d ../unidpp-trust/src ]; then \
+		if cargo build --release --manifest-path ../unidpp-trust/Cargo.toml; then :; \
+		elif [ -x ../unidpp-trust/target/release/unidpp-trust ]; then \
+			echo "warning: unidpp-trust rebuild failed (repo mid-edit); using existing binary"; \
+		else echo "error: unidpp-trust has no binary and the build failed" >&2; exit 1; fi; \
+	else \
+		echo "unidpp-trust source not present ; skipping build."; \
+	fi
+
+deps-log:                   ## Build unidpp-log when its source is present.
+	@if [ -d ../unidpp-log/src ]; then \
+		if cargo build --release --manifest-path ../unidpp-log/Cargo.toml; then :; \
+		elif [ -x ../unidpp-log/target/release/unidpp-log ]; then \
+			echo "warning: unidpp-log rebuild failed (repo mid-edit); using existing binary"; \
+		else echo "error: unidpp-log has no binary and the build failed" >&2; exit 1; fi; \
+	else \
+		echo "unidpp-log source not present ; skipping build."; \
 	fi
 
 up:                         ## Start the registry in the background (compose).
