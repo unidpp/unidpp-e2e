@@ -29,6 +29,11 @@
 #                      the transparency log; the signed inclusion
 #                      receipts land in build/live/e2e/log-receipts/
 #
+# The exported UNIDPP_ISSUER_URL also reaches the unidpp-gateway that
+# demo.sh starts for its B-INT beat (127.0.0.1:8398): the gateway then
+# renders the REAL story passports from the issuer instead of its
+# seeded fixtures.
+#
 # Journals are wiped at start (fresh sequencing per run): the log's
 # receipt ids and the registry's applicability assertions stay
 # deterministic across re-runs.
@@ -148,6 +153,8 @@ printf '    registry : http://%s\n' "$REGISTRY_BIND"
 printf '    issuer   : http://%s\n' "$ISSUER_BIND"
 printf '    trust    : http://%s (verify anchor source: GET /keyring)\n' "$TRUST_BIND"
 printf '    log      : http://%s (pack commitments -> signed receipts)\n' "$LOG_BIND"
+printf '    gateway  : started by demo.sh on 127.0.0.1:8398 (B-INT: UNTP render + ingest,\n'
+printf '               issuer-upstream through the exported UNIDPP_ISSUER_URL)\n'
 printf '    anchor   : trust /keyring pins the issuer pack key (shared dev seed)\n'
 printf '    journals : %s/*.journal.jsonl\n' "$LIVE_DIR"
 printf '\n'

@@ -14,6 +14,12 @@
 # Issuance goes through scripts/issuer-hook.sh — today driven by the
 # unidpp-cli , automatically switching to the unidpp-issuer
 # service  once its binary exists (see that file).
+# unidpp-gateway (../unidpp-gateway) runs the B-INT beat: the S12
+# interop round trip — render the passport as the UNTP VC triad, feed
+# the triad back through POST /untp/ingest. Issuer-driver runs inherit
+# UNIDPP_ISSUER_URL so the gateway renders the REAL story passports;
+# local-driver runs use its seeded fixtures (it binds :8398 — clear of
+# the fixed live-service ports).
 #
 # LIVE mode (make demo-live / scripts/demo-live.sh): all four sibling
 # services run for real — UNIDPP_ISSUER_URL (server-signed events,
@@ -33,6 +39,14 @@ UNIDPP="${UNIDPP_BIN:-$FAMILY_DIR/unidpp-cli/target/release/unidpp}"
 REGISTRY_BIN="${UNIDPP_REGISTRY_BIN:-$FAMILY_DIR/unidpp-registry/target/release/unidpp-registry}"
 REGISTRY_BIND="${UNIDPP_REGISTRY_BIND:-127.0.0.1:8098}"
 REGISTRY_URL="${UNIDPP_REGISTRY_URL:-http://$REGISTRY_BIND}"
+
+# The interop gateway (B-INT). :8398 stays clear of the fixed
+# live-service ports (8092/8096/8098/8194) and of the gateway's own
+# :8094 default, which a parallel deployment may hold.
+GATEWAY_BIN="${UNIDPP_GATEWAY_BIN:-$FAMILY_DIR/unidpp-gateway/target/release/unidpp-gateway}"
+GATEWAY_BIND="${UNIDPP_GATEWAY_BIND:-127.0.0.1:8398}"
+GATEWAY_URL="http://$GATEWAY_BIND"
+GATEWAY_PID=""
 
 # Live-service wiring (make demo-live / scripts/demo-live.sh):
 #   UNIDPP_TRUST_URL — verify anchors are pinned from the trust
@@ -173,6 +187,37 @@ installs = [
     if e["event"].get("event_type") == "install"
 ]
 print(installs[index]["other"] if index < len(installs) else "")
+PYEOF
+}
+
+# The UNTP identifier value a rendered triad carries for its subject
+# (the B-INT round trip: this value must parse back to the same core
+# identity the source passport holds).
+python3_triad_identifier() { # python3_triad_identifier <triad-file>
+    python3 - "$1" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+print(doc["passport"]["productIdentifiers"][0]["value"])
+PYEOF
+}
+
+# Did every conformity standard the triad rendered land as a profile
+# binding on the ingested passport? (standardsConformance -> profiles)
+python3_untp_bindings() { # python3_untp_bindings <triad-file> <ingest-file>
+    python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+triad = json.load(open(sys.argv[1]))
+ingest = json.load(open(sys.argv[2]))
+standards = [c.get("standard", "") for c in
+             triad["passport"].get("standardsConformance") or []]
+bound = [p.get("id", "") for p in ingest.get("profiles") or []]
+missing = [s for s in standards if s not in bound]
+if not standards:
+    print("no standardsConformance rendered")
+elif missing:
+    print("unbound: " + ",".join(missing))
+else:
+    print("ok")
 PYEOF
 }
 
@@ -354,7 +399,69 @@ stop_registry() {
     fi
 }
 
-cleanup() { stop_registry; }
+# ---------------------------------------------------------------------------
+# unidpp-gateway — the B-INT interop beat (render to UNTP, ingest back)
+# ---------------------------------------------------------------------------
+
+# Start the interop gateway. An issuer-driver run inherits
+# UNIDPP_ISSUER_URL from the environment (demo-live exports it), so
+# the gateway renders the REAL story passports from the issuer's
+# document API; a local-driver run starts it fixture-backed (the
+# story's CLI-file passports are not behind an HTTP issuer there).
+start_gateway() {
+    if curl -sf "$GATEWAY_URL/healthz" >/dev/null 2>&1; then
+        note "using already-running unidpp-gateway at $GATEWAY_URL"
+        return 0
+    fi
+    [ -x "$GATEWAY_BIN" ] || fail "gateway binary missing: $GATEWAY_BIN (run: make deps)"
+    if [ "$(detect_issuer_mode)" = issuer ]; then
+        note "starting unidpp-gateway on $GATEWAY_BIND (issuer upstream: $ISSUER_URL)"
+    else
+        note "starting unidpp-gateway on $GATEWAY_BIND (seeded fixtures — no issuer upstream)"
+    fi
+    UNIDPP_GATEWAY_BIND="$GATEWAY_BIND" "$GATEWAY_BIN" >/dev/null 2>&1 &
+    GATEWAY_PID=$!
+    gateway_ready=0
+    gateway_try=0
+    while [ "$gateway_try" -lt 50 ]; do
+        if curl -sf "$GATEWAY_URL/healthz" >/dev/null 2>&1; then
+            gateway_ready=1
+            break
+        fi
+        gateway_try=$((gateway_try + 1))
+        sleep 0.2
+    done
+    [ "$gateway_ready" = 1 ] || fail "unidpp-gateway did not become healthy on $GATEWAY_URL"
+    say "unidpp-gateway healthy at $GATEWAY_URL (UNTP triad render + ingest)"
+}
+
+stop_gateway() {
+    if [ -n "$GATEWAY_PID" ]; then
+        kill "$GATEWAY_PID" 2>/dev/null
+        wait "$GATEWAY_PID" 2>/dev/null
+        GATEWAY_PID=""
+    fi
+}
+
+gateway_get() { # gateway_get <path> <out-file>
+    gg_path="$1"
+    gg_out="$2"
+    show "GET $GATEWAY_URL$gg_path"
+    if ! curl -sf "$GATEWAY_URL$gg_path" >"$gg_out"; then
+        fail "gateway GET failed: $gg_path"
+    fi
+}
+
+# POST a body file to /untp/ingest. The HTTP status code is printed;
+# the response body lands in <out-file>.
+gateway_ingest() { # gateway_ingest <body-file> <out-file>
+    gi_body="$1"
+    gi_out="$2"
+    curl -s -o "$gi_out" -w '%{http_code}' -X POST "$GATEWAY_URL/untp/ingest" \
+        -H 'content-type: application/json' --data-binary @"$gi_body"
+}
+
+cleanup() { stop_gateway; stop_registry; }
 trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
@@ -743,6 +850,80 @@ PYEOF
     log_anchor_pack "$WORK_DIR/b-cto.pack" b-cto "$CTO_URN"
 
     what "the CTO variant is composition, not re-issuance: the same frame type, one config vector, R3 edges to each chosen option's own passport."
+
+    # =====================================================================
+    beat "B-INT" "S12 interop: render to UNTP, ingest back"
+    # =====================================================================
+    what "the S12 seam is bidirectional: the core passport renders as the UNTP verifiable-credential triad, and the triad ingests back as a core passport — the same subject identity, conformity credentials landed as profile bindings, idempotent per subject."
+
+    start_gateway
+
+    if [ "$(detect_issuer_mode)" = issuer ]; then
+        bint_render_id="$CTO_URN"
+        bint_source_identity="$(json_get "$WORK_DIR/e8-cto.json" product_id)"
+        say "subject:   the B-CTO instance the story just composed ($bint_source_identity),"
+        say "           rendered by the gateway from the live issuer document"
+    else
+        gateway_get / "$WORK_DIR/b-int-discovery.json"
+        bint_render_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["fixtures"][0]["product_id"])' "$WORK_DIR/b-int-discovery.json")"
+        bint_source_identity="$bint_render_id"
+        say "subject:   the gateway's seeded pilot fixture ($bint_render_id) — the local"
+        say "           driver keeps the story passports as CLI files, not behind an HTTP"
+        say "           issuer; run make demo-live to round-trip the real B-CTO passport"
+    fi
+
+    gateway_get "/untp/product/$bint_render_id" "$WORK_DIR/b-int-triad.json"
+
+    check "B-INT triad renders under the UNTP profile" \
+        "urn:unidpp:profile:render:untp" \
+        "$(json_path "$WORK_DIR/b-int-triad.json" rendering.profile)"
+    if [ "$(detect_issuer_mode)" = issuer ]; then
+        check "B-INT render source is the live issuer" issuer \
+            "$(json_path "$WORK_DIR/b-int-triad.json" rendering.source)"
+        say "verdict:   the gateway verified the issuer's Ed25519 event signatures against"
+        say "           the anchors pinned from GET $ISSUER_URL/keyring"
+    else
+        check "B-INT render source is the seeded fixture" fixture \
+            "$(json_path "$WORK_DIR/b-int-triad.json" rendering.source)"
+    fi
+    check "B-INT render keeps the source product identity" \
+        "$bint_source_identity" \
+        "$(python3_triad_identifier "$WORK_DIR/b-int-triad.json")"
+
+    show "POST $GATEWAY_URL/untp/ingest  (the triad just rendered)"
+    bint_code1="$(gateway_ingest "$WORK_DIR/b-int-triad.json" "$WORK_DIR/b-int-ingest-1.json")"
+    bint_status1="$(json_get "$WORK_DIR/b-int-ingest-1.json" status)"
+    # A gateway this run started answers 201/imported (fresh store); one
+    # still holding a previous run's ingests answers 200/matched. Both
+    # honor the contract; anything else fails loudly.
+    if { [ "$bint_code1" = 201 ] && [ "$bint_status1" = imported ]; } \
+        || { [ "$bint_code1" = 200 ] && [ "$bint_status1" = matched ]; }; then
+        check "B-INT first ingest imports (201), or matches on re-runs (200)" ok ok
+    else
+        check "B-INT first ingest imports (201), or matches on re-runs (200)" \
+            "201/imported or 200/matched" "$bint_code1/$bint_status1"
+    fi
+    bint_pid1="$(json_get "$WORK_DIR/b-int-ingest-1.json" passport_id)"
+    check "B-INT ingested identity round-trips to the source passport" \
+        "$bint_source_identity" \
+        "$(json_get "$WORK_DIR/b-int-ingest-1.json" identity)"
+    check "B-INT standardsConformance lands as profile bindings" ok \
+        "$(python3_untp_bindings "$WORK_DIR/b-int-triad.json" "$WORK_DIR/b-int-ingest-1.json")"
+    say "imported:  $(json_get "$WORK_DIR/b-int-ingest-1.json" passport_id)"
+    say "bindings:  $(python3_count "$WORK_DIR/b-int-ingest-1.json" profiles) profile bindings from the triad's conformity credentials"
+
+    # The second ingest of the same subject must match, never duplicate (I1).
+    show "POST $GATEWAY_URL/untp/ingest  (again — idempotence per subject)"
+    bint_code2="$(gateway_ingest "$WORK_DIR/b-int-triad.json" "$WORK_DIR/b-int-ingest-2.json")"
+    check "B-INT re-ingest HTTP status" 200 "$bint_code2"
+    check "B-INT re-ingest matches (idempotent per subject)" matched \
+        "$(json_get "$WORK_DIR/b-int-ingest-2.json" status)"
+    check "B-INT re-ingest returns the same passport id" \
+        "$bint_pid1" "$(json_get "$WORK_DIR/b-int-ingest-2.json" passport_id)"
+
+    stop_gateway
+
+    what "render and ingest are inverse projections over one identity: the UNTP consumer and the UniDPP core agree on the subject — no parallel-universe passport."
 
     # =====================================================================
     beat "B3" "Placement in the EU (profile growth by dated binding)"

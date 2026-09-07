@@ -16,6 +16,9 @@
 #      real; a B1-B4 subset verifies with the anchor pinned from the
 #      trust service's /keyring and anchors packs in the log. SKIPS
 #      (not fails) when the sibling binaries cannot be produced.
+#   The B-INT interop beat (render to UNTP, ingest back through
+#   unidpp-gateway) rides inside tests 1 and 5; both assert its label
+#   and its identity-match check.
 #
 # A failing assertion prints the diagnostic and the script returns the
 # assertion's exit status. `make test` chains them; a single failure
@@ -93,6 +96,17 @@ test_happy_path() {
     assert "CTO composition beat labelled" 1 "$cto_present"
     cto_children="$(grep -cF 'CTO instance outgoing installs == 2 == 2' "$plain" || true)"
     assert "CTO composed instance shows its two children" 1 "$cto_children"
+
+    # The S12 interop beat rides between B-CTO and B3: the gateway
+    # renders the passport as the UNTP triad and ingests it back. The
+    # identity-match check line only prints in its [ok] form on a real
+    # round trip (the [FAIL] form carries "expected", not "==").
+    int_present="$(grep -cF 'B-INT — S12 interop' "$plain" || true)"
+    assert "S12 interop beat labelled" 1 "$int_present"
+    assert_grep "B-INT identity round-trip check" "$plain" \
+        'B-INT ingested identity round-trips to the source passport == '
+    assert_grep "B-INT re-ingest matched" "$plain" \
+        'B-INT re-ingest matches .idempotent per subject. == matched'
 
     for beat_label in 'B1 — Assembly in Kyoto' \
                       'B2 — Parts carry their own duties' \
@@ -225,17 +239,18 @@ test_live_services() {
     printf '\n\033[1m== test 5 ==\033[0m  live services: B1-B4 subset over registry + issuer + trust + log\n'
 
     # The live test needs the three service binaries on top of the CLI
-    # and registry the earlier tests already built. Build any missing
-    # one; SKIP (not FAIL) when a binary cannot be produced — the
-    # sibling repos are developed in parallel and can be mid-edit.
-    for live_repo in unidpp-issuer unidpp-trust unidpp-log; do
+    # and registry the earlier tests already built, plus the gateway
+    # (the B-INT beat rides inside the B1-B4 subset). Build any
+    # missing one; SKIP (not FAIL) when a binary cannot be produced —
+    # the sibling repos are developed in parallel and can be mid-edit.
+    for live_repo in unidpp-issuer unidpp-trust unidpp-log unidpp-gateway; do
         live_bin="$ROOT_DIR/../$live_repo/target/release/$live_repo"
         [ -x "$live_bin" ] && continue
         printf '  ....... building missing %s\n' "$live_repo"
         cargo build --release --manifest-path \
             "$ROOT_DIR/../$live_repo/Cargo.toml" >/dev/null 2>&1 || true
     done
-    for live_repo in unidpp-issuer unidpp-trust unidpp-log; do
+    for live_repo in unidpp-issuer unidpp-trust unidpp-log unidpp-gateway; do
         live_bin="$ROOT_DIR/../$live_repo/target/release/$live_repo"
         if [ ! -x "$live_bin" ]; then
             printf '  \033[33m[SKIP]\033[0m live test: %s binary unavailable (build failed or repo absent)\n' \
@@ -270,6 +285,11 @@ test_live_services() {
     assert_grep "issuer and trust anchors identical" "$plain" '\[ok\].*issuer pack anchor == trust-pinned anchor'
     assert_grep "B4 verify PASS under the live anchor" "$plain" 'B4 border moment.*(PASS|== 0)'
     assert_grep "log receipts narrated with ids" "$plain" 'log: +receipt [0-9]+ '
+    assert_grep "B-INT beat in the live run" "$plain" 'B-INT — S12 interop'
+    assert_grep "B-INT renders from the live issuer" "$plain" \
+        'B-INT render source is the live issuer == issuer'
+    assert_grep "B-INT identity round-trip in the live run" "$plain" \
+        'B-INT ingested identity round-trips to the source passport == '
     assert_grep "live subset completed" "$plain" 'DEMO PASSED'
 
     # Independent receipt check, outside the orchestrator: the stored

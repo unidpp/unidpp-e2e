@@ -1,4 +1,4 @@
-.PHONY: help demo demo-live test clean deps deps-cli deps-registry deps-issuer deps-trust deps-log deps-live up down status
+.PHONY: help demo demo-live test clean deps deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway deps-live up down status
 
 HELP_WIDTH = 18
 help:                       ## Show this help.
@@ -13,9 +13,9 @@ demo-live: deps-live        ## Walk B1-B10 against the four LIVE sibling service
 test:                       ## Run the shell test harness (happy path + tamper tests).
 	./tests/run_tests.sh
 
-deps: deps-cli deps-registry ## Build every dependent binary (release).
+deps: deps-cli deps-registry deps-gateway ## Build every dependent binary (release).
 
-deps-live: deps-cli deps-registry deps-issuer deps-trust deps-log ## Build every live-service binary (release).
+deps-live: deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway ## Build every live-service binary (release).
 
 # The sibling repos are developed in parallel; a rebuild can fail while
 # a sibling is mid-edit. When that happens we fall back to the existing
@@ -60,6 +60,16 @@ deps-log:                   ## Build unidpp-log when its source is present.
 		else echo "error: unidpp-log has no binary and the build failed" >&2; exit 1; fi; \
 	else \
 		echo "unidpp-log source not present ; skipping build."; \
+	fi
+
+deps-gateway:               ## Build unidpp-gateway when its source is present.
+	@if [ -d ../unidpp-gateway/src ] && [ -n "$$(ls -A ../unidpp-gateway/src 2>/dev/null)" ]; then \
+		if cargo build --release --manifest-path ../unidpp-gateway/Cargo.toml; then :; \
+		elif [ -x ../unidpp-gateway/target/release/unidpp-gateway ]; then \
+			echo "warning: unidpp-gateway rebuild failed (repo mid-edit); using existing binary"; \
+		else echo "error: unidpp-gateway has no binary and the build failed" >&2; exit 1; fi; \
+	else \
+		echo "unidpp-gateway source not yet present ; skipping build."; \
 	fi
 
 up:                         ## Start the registry in the background (compose).

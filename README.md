@@ -2,9 +2,10 @@
 
 The public, end-to-end demonstration orchestrator — **the public end-to-end demonstration**.
 Walks the [Momiji Mobility E8](../../the UniDPP E8 exemplar story) story
-beats (B1–B10, plus the B-CTO build-to-order variant between B2 and B3)
-against the running registry, signed Tier-A packs, and the
-offline verifier. Exits non-zero on any unexpected verify outcome.
+beats (B1–B10, plus the B-CTO build-to-order variant and the B-INT
+S12-interop round trip, both between B2 and B3)
+against the running registry, signed Tier-A packs, the offline verifier,
+and the UNTP interop gateway. Exits non-zero on any unexpected verify outcome.
 
 Source of truth: [`the UniDPP E8 exemplar story`](../../the UniDPP E8 exemplar story).
 This repo runs the story; it does not document it.
@@ -61,6 +62,8 @@ orchestrator runs.
 |---|---|---|
 | **B1** | issuance where duty attaches | `unidpp create` for the JP type, instance, drive unit, pack, and lot passports; `unidpp event --type issuance` on each. |
 | **B2** | parts carry their own duties | `unidpp event --type install` on the bike (outgoing edges to drive + pack) and on each part (incoming); dormant identifiers recorded to the lot at absorbing recoverability; **registry POST /transforms** registers the CCC ≅ IEC-62368-1 equivalence. |
+| **B-CTO** | build-to-order variant | one model passport per catalogue option; the instance composes through the same R3 edges; asserts the config vector resolves through the graph (2 outgoing installs, bidirectional knowledge). |
+| **B-INT** | S12 interop: render to UNTP, ingest back | starts **unidpp-gateway** on `127.0.0.1:8398`; `GET /untp/product/{id}` renders the passport as the UNTP VC triad; `POST /untp/ingest` feeds the triad back; asserts the triad profile, the render source (**issuer** live / **fixture** local), the identity round-trip (ingest identity == the source passport's product identity), the conformity credentials → profile bindings, and a second ingest **matched** with the same passport id. Live mode renders the real B-CTO instance; local driver mode honestly round-trips the gateway's seeded pilot fixture. |
 | **B3** | placement in the EU | **registry POST /items** (EU LMT profile) + **POST /applicability** (effective 2028-02-01); queries at 2027-06-01 and 2028-06-01 prove the dated binding (`/applicability?at=`); then `unidpp event --type custody.transfer` for the placement + sale. |
 | **B4** | the border moment | `unidpp pack --key e8-demo-pack-seed` mints a Tier-A pack with REAL ECDSA-P256 signature (anchor hex printed); **officer: offline**; `unidpp verify pack --anchor <pinned> --as-of 2028-02-15T09:30:00Z` → **verdict PASS** with the three readings (cryptographic / evidentiary / current-state) and 10/10 field coverage. |
 | **B5** | edge state | `unidpp event --type milestone.record` (BMS cycle count, odometer); `unidpp event --type inspection.stamp` (service-lens stamp). |
@@ -120,6 +123,7 @@ Useful environment variables:
 | `UNIDPP_TRUST_BIND` | `127.0.0.1:8092` | trust bind address in `demo-live` |
 | `UNIDPP_LOG_URL` | unset | anchor every minted pack's commitment in the transparency log (`POST /commitments`); signed receipts land in `<work>/log-receipts/` |
 | `UNIDPP_LOG_BIND` | `127.0.0.1:8194` | log bind address in `demo-live` (not `:8092` — that port is trust's) |
+| `UNIDPP_GATEWAY_BIND` | `127.0.0.1:8398` | interop-gateway bind address for the B-INT beat (clear of the fixed live-service ports and of the gateway's own `:8094` default) |
 | `UNIDPP_E2E_LIVE_DIR` | `build/live` | where `demo-live` keeps service journals + artifacts |
 | `UNIDPP_E2E_STOP_AFTER` | unset | `B4` exits after the border moment (the live smoke subset) |
 | `UNIDPP_E2E_WORK_DIR` | `build/e2e` | where artifacts land |
@@ -195,6 +199,13 @@ receipt ids stay deterministic across re-runs). The services are
 stopped on exit; `make demo-live UNIDPP_TRUST_BIND=…` etc. moves any
 of them.
 
+`demo.sh` additionally starts **unidpp-gateway** on `127.0.0.1:8398`
+for the B-INT beat (after B-CTO, before B3). In the live run the
+gateway inherits `UNIDPP_ISSUER_URL`, so it renders the REAL story
+passports from the issuer and verifies their Ed25519 event signatures
+against the issuer keyring; in the local-driver run it serves its own
+seeded fixtures and narrates that honestly.
+
 ## Integration status
 
 | Piece | Source | Status |
@@ -204,6 +215,7 @@ of them.
 | `unidpp-issuer` | `../unidpp-issuer` | Optional. When `UNIDPP_ISSUER_URL` is set, events and packs are issued via the HTTP API. |
 | `unidpp-trust` | `../unidpp-trust` | Wired (`make demo-live`). `GET /keyring` supplies the pinned verify anchor; jurisdiction trust lists, master list, revocations available for future beats. |
 | `unidpp-log` | `../unidpp-log` | Wired (`make demo-live`). `POST /commitments` anchors every minted pack; signed inclusion receipts asserted + stored. |
+| `unidpp-gateway` | `../unidpp-gateway` | Wired (B-INT, both modes). `GET /untp/product/{id}` renders the UNTP VC triad; `POST /untp/ingest` imports it back — deterministic identity, conformity → profile bindings, idempotent per subject. |
 | `unidpp-resolver`, `unidpp-py`, … | sibling repos | not in scope for the demo. |
 
 The `scripts/issuer-hook.sh` file is the **single, clearly-marked issuer
@@ -230,7 +242,9 @@ anchors, live receipts.
 4. **Registry dated binding.** EU profile applicability is empty before
  2028-02-01 and non-empty after — the dated-binding machinery.
 5. **Live services.** `demo-live.sh` spawns registry + issuer + trust +
- log; a B1–B4 subset runs with server-side issuance, the anchor pinned
+ log; a B1–B4 subset (which now includes the B-INT interop beat, with
+ the gateway rendering the live issuer's B-CTO instance) runs with
+ server-side issuance, the anchor pinned
  from the trust service's `/keyring` (asserted byte-identical to the
  issuer's pack anchor) and pack commitments anchored in the log; B4's
  verify must exit **0** under the live anchor. The test **SKIPS** (not
