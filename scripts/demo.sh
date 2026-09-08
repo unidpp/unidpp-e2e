@@ -48,6 +48,18 @@ GATEWAY_BIND="${UNIDPP_GATEWAY_BIND:-127.0.0.1:8398}"
 GATEWAY_URL="http://$GATEWAY_BIND"
 GATEWAY_PID=""
 
+# The B-QUORUM beat's trust base: the live trust service in live mode
+# (UNIDPP_TRUST_URL), else an ephemeral unidpp-trust started below.
+# :8097 stays clear of the fixed live-service ports (8092/8096/8098/
+# 8194) and of the gateway's :8398. The quorum-ceremony binary runs
+# the REAL threshold ceremony (Feldman VSS + threshold Schnorr -> one
+# standard Ed25519 group signature) and emits the HTTP bodies.
+TRUST_BIN="${UNIDPP_TRUST_BIN:-$FAMILY_DIR/unidpp-trust/target/release/unidpp-trust}"
+QUORUM_CEREMONY_BIN="${UNIDPP_QUORUM_CEREMONY_BIN:-$FAMILY_DIR/unidpp-trust/target/release/quorum-ceremony}"
+QUORUM_BIND="${UNIDPP_QUORUM_BIND:-127.0.0.1:8097}"
+QUORUM_URL="http://$QUORUM_BIND"
+QUORUM_PID=""
+
 # Live-service wiring (make demo-live / scripts/demo-live.sh):
 #   UNIDPP_TRUST_URL — verify anchors are pinned from the trust
 #     service's GET /keyring instead of the mint-returned fixture
@@ -400,6 +412,78 @@ stop_registry() {
 }
 
 # ---------------------------------------------------------------------------
+# unidpp-trust — the B-QUORUM beat (retroactive distrust as a quorum act)
+# ---------------------------------------------------------------------------
+
+# The trust base for the quorum beat: the live trust service in live
+# mode (UNIDPP_TRUST_URL, already healthy), else an ephemeral instance
+# (fresh journal under the work dir, no seed fixtures — the beat seeds
+# its own quorum node). Returns non-zero when it cannot run; callers
+# narrate honestly instead of failing the story.
+start_quorum_trust() {
+    if [ -n "$TRUST_URL" ]; then
+        QUORUM_URL="$TRUST_URL"
+        note "B-QUORUM targets the live trust service at $TRUST_URL"
+        return 0
+    fi
+    [ -x "$TRUST_BIN" ] || return 1
+    note "starting ephemeral unidpp-trust on $QUORUM_BIND (B-QUORUM only)"
+    rm -f "$WORK_DIR/quorum-trust.journal.jsonl"
+    UNIDPP_TRUST_BIND="$QUORUM_BIND" \
+    UNIDPP_TRUST_STATE_FILE="$WORK_DIR/quorum-trust.journal.jsonl" \
+    UNIDPP_TRUST_NO_SEED_FIXTURES=1 \
+        "$TRUST_BIN" >/dev/null 2>&1 &
+    QUORUM_PID=$!
+    quorum_try=0
+    while [ "$quorum_try" -lt 50 ]; do
+        if curl -sf "$QUORUM_URL/healthz" >/dev/null 2>&1; then
+            return 0
+        fi
+        quorum_try=$((quorum_try + 1))
+        sleep 0.2
+    done
+    stop_quorum_trust
+    return 1
+}
+
+stop_quorum_trust() {
+    if [ -n "$QUORUM_PID" ]; then
+        kill "$QUORUM_PID" 2>/dev/null
+        wait "$QUORUM_PID" 2>/dev/null
+        QUORUM_PID=""
+    fi
+}
+
+quorum_post() { # quorum_post <path> <body-file> <out-file> -> echoes the status code
+    qp_path="$1"
+    qp_body="$2"
+    qp_out="$3"
+    show "POST $QUORUM_URL$qp_path  ($(basename "$qp_body"))" >&2
+    qp_code="$(curl -s -o "$qp_out" -w '%{http_code}' -X POST "$QUORUM_URL$qp_path" \
+        -H 'content-type: application/json' --data-binary @"$qp_body")"
+    printf '%s' "$qp_code"
+}
+
+# A dotted field of the first standing entry for the beat's subject
+# (GET /revocations?subject=node:haichuan-cn); booleans print lowercase.
+quorum_standing() { # quorum_standing <query-suffix> <dotted.field>
+    curl -sf "$QUORUM_URL/revocations?$1&subject=node:haichuan-cn" \
+        | python3 -c '
+import json, sys
+revs = json.load(sys.stdin)["revocations"]
+if not revs:
+    print("none")
+    raise SystemExit
+doc = revs[0]
+for part in sys.argv[1].split("."):
+    doc = doc[part]
+if isinstance(doc, bool):
+    doc = str(doc).lower()
+print(doc)
+' "$2"
+}
+
+# ---------------------------------------------------------------------------
 # unidpp-gateway — the B-INT interop beat (render to UNTP, ingest back)
 # ---------------------------------------------------------------------------
 
@@ -461,7 +545,7 @@ gateway_ingest() { # gateway_ingest <body-file> <out-file>
         -H 'content-type: application/json' --data-binary @"$gi_body"
 }
 
-cleanup() { stop_gateway; stop_registry; }
+cleanup() { stop_gateway; stop_registry; stop_quorum_trust; }
 trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
@@ -1158,6 +1242,118 @@ PYEOF
     what "the current pack's only degradation is freshness — its safety finding is clean; degradation is explicit, never silent."
 
     what "the recall reached the graph, not a list: computational, privacy-preserving — and the manufacturer receives aggregates."
+
+    # =====================================================================
+    beat "B-QUORUM" "Retroactive distrust is a quorum act (M-of-K, cross-jurisdiction)"
+    # =====================================================================
+    what "2030-06: evidence emerges that haichuan-cn misissued cell-lot certifications across 2027-2030 — the authority itself, not one lot. Retroactive distrust is authority-over-authority: no single regulator may do it; the graph demands a quorate M-of-K attestation."
+
+    # The trust base: the live trust service (demo-live) or an
+    # ephemeral instance; the beat narrates and skips when the real
+    # ceremony binaries are absent (it never stages the cryptography).
+    quorum_skip=""
+    if [ ! -x "$QUORUM_CEREMONY_BIN" ]; then
+        quorum_skip="quorum-ceremony binary missing ($QUORUM_CEREMONY_BIN; run: make deps-trust)"
+    fi
+    if [ -z "$quorum_skip" ] && [ -z "$TRUST_URL" ] && [ ! -x "$TRUST_BIN" ]; then
+        quorum_skip="unidpp-trust binary missing ($TRUST_BIN; run: make deps-trust)"
+    fi
+    if [ -n "$quorum_skip" ]; then
+        note "B-QUORUM narrated without running: $quorum_skip"
+        say "retroactive distrust of an authority requires a quorate attestation —"
+        say "one regulator's POST is refused (422 QuorumRequired); 2-of-3 members from"
+        say "different jurisdictions combine threshold-Schnorr partials into ONE group"
+        say "signature, the quorum node pins the group key, and the declaration lands."
+        say "The full over-HTTP proof: unidpp-trust tests/quorum.rs."
+    elif ! start_quorum_trust; then
+        note "B-QUORUM narrated without running: the ephemeral trust service did not become healthy"
+    else
+        say "trust:    $QUORUM_URL — the standing authority for the quorum act"
+
+        QUORUM_DIR="$WORK_DIR/quorum-ceremony"
+        mkdir -p "$QUORUM_DIR"
+
+        # -- 1. One regulator tries alone: the refusal is the policy. --
+        printf '%s' '{"subject":{"kind":"node","id":"haichuan-cn"},"reason":{"token":"misissuance"},"declared_at":"2030-06-15T00:00:00Z","declared_by":"e8-retro-quorum","window":{"start":"2027-01-01T00:00:00Z","end":"2030-06-01T00:00:00Z"},"quorum":null}' \
+            >"$QUORUM_DIR/no-attestation.json"
+        quorum_code="$(quorum_post /revocations "$QUORUM_DIR/no-attestation.json" "$QUORUM_DIR/no-attestation.response.json")"
+        check "B-QUORUM single regulator refused (422 — quorum attestation required)" 422 "$quorum_code"
+
+        # -- 2. One member tries alone: the refusal is the mathematics. --
+        show "quorum-ceremony declare --threshold 2 --signer reg-cn-samr  (one member alone)"
+        if "$QUORUM_CEREMONY_BIN" declare \
+            --quorum e8-retro-quorum --threshold 2 \
+            --member reg-cn-samr --member reg-jp-meti --member reg-eu-espr \
+            --signer reg-cn-samr \
+            --subject-kind node --subject-id haichuan-cn \
+            --reason misissuance \
+            --window-start 2027-01-01T00:00:00Z --window-end 2030-06-01T00:00:00Z \
+            --declared-at 2030-06-15T00:00:00Z \
+            --out-dir "$QUORUM_DIR/below" >"$QUORUM_DIR/below.log" 2>&1; then
+            check "B-QUORUM one-member ceremony refused by the cryptography" refused accepted
+        else
+            check "B-QUORUM one-member ceremony refused by the cryptography" refused refused
+        fi
+        say "          fewer than M partials cannot produce a group signature — no policy layer sees the request at all"
+
+        # -- 3. The quorate ceremony: two members, two jurisdictions. --
+        show "quorum-ceremony declare --threshold 2 --signer reg-cn-samr --signer reg-jp-meti  (CN+JP: 2-of-3)"
+        if ! "$QUORUM_CEREMONY_BIN" declare \
+            --quorum e8-retro-quorum --threshold 2 \
+            --member reg-cn-samr --member reg-jp-meti --member reg-eu-espr \
+            --signer reg-cn-samr --signer reg-jp-meti \
+            --subject-kind node --subject-id haichuan-cn \
+            --reason misissuance \
+            --window-start 2027-01-01T00:00:00Z --window-end 2030-06-01T00:00:00Z \
+            --declared-at 2030-06-15T00:00:00Z \
+            --out-dir "$QUORUM_DIR/quorate" >"$QUORUM_DIR/quorate.log" 2>&1; then
+            fail "the 2-of-3 quorum ceremony failed (see $QUORUM_DIR/quorate.log)"
+        fi
+        quorum_artifacts=0
+        for quorum_file in quorum-node.json revocation.json ceremony.json; do
+            [ -f "$QUORUM_DIR/quorate/$quorum_file" ] && quorum_artifacts=$((quorum_artifacts + 1))
+        done
+        check "B-QUORUM ceremony artifacts written (node pin, attestation, audit trail)" 3 "$quorum_artifacts"
+
+        # -- 4. Pinning is load-bearing: an unpinned group key certifies
+        #       nothing; then the quorum node pins it. --
+        quorum_code="$(quorum_post /revocations "$QUORUM_DIR/quorate/revocation.json" "$QUORUM_DIR/unpinned.response.json")"
+        check "B-QUORUM unpinned group key certifies nothing (422)" 422 "$quorum_code"
+        quorum_code="$(quorum_post /nodes "$QUORUM_DIR/quorate/quorum-node.json" "$QUORUM_DIR/node.response.json")"
+        check "B-QUORUM quorum node pinned (threshold group + group key registered)" 201 "$quorum_code"
+
+        # -- 5. Quorate: the declaration lands. --
+        quorum_code="$(quorum_post /revocations "$QUORUM_DIR/quorate/revocation.json" "$QUORUM_DIR/declared.response.json")"
+        check "B-QUORUM quorate 2-of-3 declaration accepted (201)" 201 "$quorum_code"
+
+        # -- 6. The pack: Tier A cannot see standing (its own finding
+        #       says so); the verdict degrades through the overlay. --
+        what "the lot's own pack still verifies on its own terms — but its issuing authority is now distrusted ab initio: the combined verdict a verifier must present is void."
+        bq_anchor="$(issuer_mint_pack "$WORK_DIR/cell-lot.json" "$WORK_DIR/b-quorum-lot.pack")"
+        verify_and_expect "$WORK_DIR/b-quorum-lot.pack" "$bq_anchor" \
+            "2030-06-10T00:00:00Z" 2 \
+            "B-QUORUM the lot's own pack, pre-act — the B9 campaign in its log already fails it (the quorum question is its authority, not this taint)"
+        log_anchor_pack "$WORK_DIR/b-quorum-lot.pack" b-quorum-lot "$LOT_URN"
+
+        show "GET $QUORUM_URL/revocations?at=2027-01-15T08:00:00Z&subject=node:haichuan-cn  (the lot's issuance moment)"
+        check "B-QUORUM lot issuance (2027-01-15) inside the window: void ab initio" \
+            "void-ab-initio" "$(quorum_standing "at=2027-01-15T08:00:00Z" standing_at_as_of)"
+        check "B-QUORUM the pack verdict degrades: in-window verifications no longer stand" \
+            "false" "$(quorum_standing "at=2027-01-15T08:00:00Z" verifications_at_stand)"
+        check "B-QUORUM the quorum view names the form: threshold-group, quorate" \
+            "threshold-group" "$(quorum_standing "at=2027-01-15T08:00:00Z" quorum.form)"
+
+        show "GET $QUORUM_URL/revocations?at=2027-01-15T08:00:00Z&known_by=2030-06-14T23:59:59Z  (a diligent verifier, before the act was knowable)"
+        check "B-QUORUM evidentiary cutoff: pre-declaration verifications stand" \
+            "true" "$(quorum_standing "at=2027-01-15T08:00:00Z&known_by=2030-06-14T23:59:59Z" verifications_at_stand)"
+
+        check "B-QUORUM before the window (2026-07): retroactivity does not leak past its start" \
+            "valid" "$(quorum_standing "at=2026-07-01T00:00:00Z" standing_at_as_of)"
+
+        stop_quorum_trust
+    fi
+
+    what "retroactive distrust took a quorum: two jurisdictions' regulators combined partials into one group signature — and the cutoff protects every verifier who acted before it was knowable."
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"

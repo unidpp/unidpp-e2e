@@ -108,6 +108,23 @@ test_happy_path() {
     assert_grep "B-INT re-ingest matched" "$plain" \
         'B-INT re-ingest matches .idempotent per subject. == matched'
 
+    # The quorum beat rides between B9 and B10: retroactive distrust
+    # of an authority as a quorate M-of-K act (2-of-3 jurisdictions).
+    quorum_present="$(grep -cF 'B-QUORUM — Retroactive distrust' "$plain" || true)"
+    assert "quorum beat labelled" 1 "$quorum_present"
+    # The outcome checks hold only when the beat RAN (the trust and
+    # quorum-ceremony binaries present); a narrated skip is honest.
+    if grep -qF 'B-QUORUM narrated without running' "$plain"; then
+        printf '  \033[33m[skip]\033[0m quorum beat narrated only (trust binaries absent)\n'
+    else
+        assert_grep "B-QUORUM single regulator refused" "$plain" \
+            'B-QUORUM single regulator refused .422 — quorum attestation required. == 422'
+        assert_grep "B-QUORUM quorate declaration accepted" "$plain" \
+            'B-QUORUM quorate 2-of-3 declaration accepted .201. == 201'
+        assert_grep "B-QUORUM verdict degrades through the standing overlay" "$plain" \
+            'B-QUORUM the pack verdict degrades: in-window verifications no longer stand == false'
+    fi
+
     for beat_label in 'B1 — Assembly in Kyoto' \
                       'B2 — Parts carry their own duties' \
                       'B3 — Placement in the EU' \

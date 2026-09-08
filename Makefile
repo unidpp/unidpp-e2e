@@ -4,7 +4,7 @@ HELP_WIDTH = 18
 help:                       ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[1m%-$(HELP_WIDTH)s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-demo: deps                  ## Walk the ten STORY.md beats end to end.
+demo: deps deps-trust        ## Walk the ten STORY.md beats end to end.
 	./scripts/demo.sh
 
 demo-live: deps-live        ## Walk B1-B10 against the four LIVE sibling services.
