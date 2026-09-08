@@ -1,0 +1,57 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: unidpp-e2e
+    steps:
+      # The demo drives the sibling services; check them out side by
+      # side, mirroring the family layout the orchestrator assumes.
+      - uses: actions/checkout@v4
+        with:
+          path: unidpp-e2e
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-core
+          path: unidpp-core
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-signatif
+          path: unidpp-signatif
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-cli
+          path: unidpp-cli
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-registry
+          path: unidpp-registry
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-issuer
+          path: unidpp-issuer
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-trust
+          path: unidpp-trust
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-log
+          path: unidpp-log
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-gateway
+          path: unidpp-gateway
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the demo's dependencies
+        run: make deps
+      - name: Run the story (B1-B10, B-CTO, B-INT)
+        run: make demo
+      - name: Shell test harness
+        run: make test
