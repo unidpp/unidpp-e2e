@@ -108,6 +108,18 @@ test_happy_path() {
     assert_grep "B-INT re-ingest matched" "$plain" \
         'B-INT re-ingest matches .idempotent per subject. == matched'
 
+    # The grid beat rides between B-QUORUM and B10 (Phase 1 of the
+    # build contract): the sealed segment proven from the spine alone.
+    grid_present="$(grep -cF 'G-GRID — The grid' "$plain" || true)"
+    assert "grid beat labelled" 1 "$grid_present"
+    assert_grep "G-GRID sealed segment verified from the spine" "$plain" \
+        'G-GRID the sealed segment verifies from the spine alone == ok'
+    if grep -q "cycle_count=412" "$plain"; then
+        assert "G-GRID sealed contents never leak" never leaked
+    else
+        assert "G-GRID sealed contents never leak" never never
+    fi
+
     # The quorum beat rides between B9 and B10: retroactive distrust
     # of an authority as a quorate M-of-K act (2-of-3 jurisdictions).
     quorum_present="$(grep -cF 'B-QUORUM — Retroactive distrust' "$plain" || true)"

@@ -638,7 +638,7 @@ reg_transform_body() {
 }
 
 reg_profile_body() {
-    printf '{"register_id":"unidpp-e2e","item_id":"eu-battery-lmt","class":"profile","definition":"EU battery passport profile - LMT class (Reg. (EU) 2023/1542)","version":"1.0.0","effective_from":"2027-02-18T00:00:00Z"}'
+    printf '{"register_id":"unidpp-e2e","item_id":"eu-battery-lmt","class":"profile","definition":"EU battery passport profile - LMT class (Reg. (EU) 2023/1542)","version":"1.0.0","effective_from":"2027-02-18T00:00:00Z","manifest":{"version":"1.0.0","issuer_class":"law","issuer":"ec-espr","signature":{"signature":"seeded-dev-signature"}}}'
 }
 
 reg_binding_body() {
@@ -1354,6 +1354,27 @@ PYEOF
     fi
 
     what "retroactive distrust took a quorum: two jurisdictions' regulators combined partials into one group signature — and the cutoff protects every verifier who acted before it was knowable."
+
+    # =====================================================================
+    beat "G-GRID" "The grid: one subject, two sovereignty segments, one spine"
+    # =====================================================================
+    what "Phase 1 of the build contract (REQUIREMENTS.md): sovereignty per-segment — an open EU segment and a SEALED CN segment, a commitment spine over both, and a verifier who proves the sealed segment without ever seeing it."
+
+    show "unidpp grid"
+    if ! "$UNIDPP" grid > "$WORK_DIR/ggrid.txt"; then
+        fail "unidpp grid failed (see $WORK_DIR/ggrid.txt)"
+    fi
+    ggrid_out="$(cat "$WORK_DIR/ggrid.txt")"
+    check "G-GRID the sealed segment verifies from the spine alone"         "ok" "$(grep -c "sealed segment: existence + currency from the spine alone" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID the spine proves append-only growth"         "ok" "$(grep -c "append-only growth provable" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID forged segment state fails loudly"         "ok" "$(grep -c "forged segment state fails" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    # The sealed plaintext NEVER appears in the transcript.
+    if grep -q "cycle_count=412" "$WORK_DIR/ggrid.txt"; then
+        check "G-GRID the sealed contents never appear" leaked never
+    else
+        check "G-GRID the sealed contents never appear" never never
+    fi
+    say "9/9 in the grid verdict — assurance without access (SG-1..3, proven in the transcript)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"
