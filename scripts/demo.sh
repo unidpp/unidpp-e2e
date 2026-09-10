@@ -1373,6 +1373,8 @@ PYEOF
         "ok" "$(grep -c "zero calls to foreign synchronous APIs" "$WORK_DIR/dossier.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the offline verdict reproduces the coverage report" \
         "ok" "$(grep -c "cn-dynamic: attested-by-authority (governing policy cn-dynamic-bms v1)" "$WORK_DIR/dossier.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID the spine's log receipt verifies offline (CN-4)" \
+        "ok" "$(grep -c "log receipt verified" "$WORK_DIR/dossier.txt" | sed 's/1/ok/;s/0/failed/')"
     ggrid_out="$(cat "$WORK_DIR/ggrid.txt")"
     check "G-GRID the sealed segment verifies from the spine alone"         "ok" "$(grep -c "sealed segment: existence + currency from the spine alone" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the spine proves append-only growth"         "ok" "$(grep -c "append-only growth provable" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
