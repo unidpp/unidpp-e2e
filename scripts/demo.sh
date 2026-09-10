@@ -1368,6 +1368,7 @@ PYEOF
     check "G-GRID the sealed segment verifies from the spine alone"         "ok" "$(grep -c "sealed segment: existence + currency from the spine alone" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the spine proves append-only growth"         "ok" "$(grep -c "append-only growth provable" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID forged segment state fails loudly"         "ok" "$(grep -c "forged segment state fails" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID the receiving profile decides (XB-4)"        "ok" "$(grep -c "acceptance: the receiving profile decides" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     # The sealed plaintext NEVER appears in the transcript.
     if grep -q "cycle_count=412" "$WORK_DIR/ggrid.txt"; then
         check "G-GRID the sealed contents never appear" leaked never
@@ -1382,7 +1383,7 @@ PYEOF
         "ok" "$(grep -c "attestation verifies under the verifier" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the verdict is coverage-graded (verified-direct + attested)" \
         "ok" "$(grep -c "verdict is coverage-graded" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    say "14/14 in the grid verdict — the CN battery case: static verified-direct, dynamic attested (XB-1..3)"
+    say "15/15 in the grid verdict — the CN battery case: static verified-direct, dynamic attested, acceptance decided (XB-1..4)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"
