@@ -1407,7 +1407,9 @@ PYEOF
         "ok" "$(grep -c "recorded route replays the verdict byte-identically" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the ancestry renders the three-way report (SI-6)" \
         "ok" "$(grep -c "ancestry renders the three-way report" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    say "17/17 in the grid verdict — the CN battery case: report object, acceptance, offline dossier, frozen view, recorded route, ancestry (XB-1..5, XB-8, SI-1/6/11)"
+    check "G-GRID retrieval withholds the sealed class WITH an offer (RT-4)" \
+        "ok" "$(grep -c "sealed class withheld WITH coverage and an offer pointer" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    say "18/18 in the grid verdict — the CN battery case incl. retrieval (Part 10): report, acceptance, offline dossier, frozen view, route, ancestry (XB-1..5, XB-8, SI-1/6/11, RT-4)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"
