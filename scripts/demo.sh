@@ -1361,9 +1361,18 @@ PYEOF
     what "Phase 1 of the build contract (REQUIREMENTS.md): sovereignty per-segment — an open EU segment and a SEALED CN segment, a commitment spine over both, and a verifier who proves the sealed segment without ever seeing it."
 
     show "unidpp grid"
-    if ! "$UNIDPP" grid > "$WORK_DIR/ggrid.txt"; then
+    if ! "$UNIDPP" grid --dossier "$WORK_DIR/pack-0001-dossier.json" > "$WORK_DIR/ggrid.txt"; then
         fail "unidpp grid failed (see $WORK_DIR/ggrid.txt)"
     fi
+    # XB-5: the offline verifier — a separate process, one file, the
+    # verifier's own anchors, zero calls to foreign systems.
+    if ! "$UNIDPP" dossier "$WORK_DIR/pack-0001-dossier.json" > "$WORK_DIR/dossier.txt"; then
+        fail "unidpp dossier failed (see $WORK_DIR/dossier.txt)"
+    fi
+    check "G-GRID the offline dossier verdict: zero foreign API calls (XB-5)" \
+        "ok" "$(grep -c "zero calls to foreign synchronous APIs" "$WORK_DIR/dossier.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID the offline verdict reproduces the coverage report" \
+        "ok" "$(grep -c "cn-dynamic: attested-by-authority (governing policy cn-dynamic-bms v1)" "$WORK_DIR/dossier.txt" | sed 's/1/ok/;s/0/failed/')"
     ggrid_out="$(cat "$WORK_DIR/ggrid.txt")"
     check "G-GRID the sealed segment verifies from the spine alone"         "ok" "$(grep -c "sealed segment: existence + currency from the spine alone" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the spine proves append-only growth"         "ok" "$(grep -c "append-only growth provable" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
@@ -1383,7 +1392,7 @@ PYEOF
         "ok" "$(grep -c "attestation verifies under the verifier" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the verdict is a coverage report object (verified-direct + attested)" \
         "ok" "$(grep -c "coverage report object" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    say "15/15 in the grid verdict — the CN battery case: static verified-direct, dynamic attested, a report object (XB-1..4, XB-8)"
+    say "15/15 in the grid verdict — the CN battery case: report object, acceptance, and the offline dossier verdict (XB-1..5, XB-8)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"
