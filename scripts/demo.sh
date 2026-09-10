@@ -1369,6 +1369,13 @@ PYEOF
     if ! "$UNIDPP" frozen "$WORK_DIR/pack-0001-frozen.json" > "$WORK_DIR/frozen.txt"; then
         fail "unidpp frozen failed (see $WORK_DIR/frozen.txt)"
     fi
+    # FW-3: the F1 claim test — third-party runnable against the
+    # published frozen view.
+    if ! "$UNIDPP" conform f1 "$WORK_DIR/pack-0001-frozen.json" > "$WORK_DIR/f1.txt"; then
+        fail "unidpp conform f1 failed (see $WORK_DIR/f1.txt)"
+    fi
+    check "G-GRID the F1 claim test passes (FW-3)" \
+        "ok" "$(grep -c "F1: PASS" "$WORK_DIR/f1.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the frozen view verifies air-gapped (SI-1)" \
         "ok" "$(grep -c "offline frozen view" "$WORK_DIR/frozen.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the frozen view re-execution matches the issuer render (SI-1)" \
