@@ -1381,9 +1381,9 @@ PYEOF
         "ok" "$(grep -c "sealed policy offers ATTESTATION" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID substitution verifies under the verifier's own anchors" \
         "ok" "$(grep -c "attestation verifies under the verifier" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    check "G-GRID the verdict is coverage-graded (verified-direct + attested)" \
-        "ok" "$(grep -c "verdict is coverage-graded" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    say "15/15 in the grid verdict — the CN battery case: static verified-direct, dynamic attested, acceptance decided (XB-1..4)"
+    check "G-GRID the verdict is a coverage report object (verified-direct + attested)" \
+        "ok" "$(grep -c "coverage report object" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    say "15/15 in the grid verdict — the CN battery case: static verified-direct, dynamic attested, a report object (XB-1..4, XB-8)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"

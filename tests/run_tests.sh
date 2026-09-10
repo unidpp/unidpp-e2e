@@ -125,7 +125,7 @@ test_happy_path() {
     assert_grep "G-GRID sovereign substitution" "$plain" \
         "G-GRID substitution verifies under the verifier's own anchors == ok"
     assert_grep "G-GRID coverage-graded verdict" "$plain" \
-        'G-GRID the verdict is coverage-graded .verified-direct . attested. == ok' 
+        'G-GRID the verdict is a coverage report object .verified-direct . attested. == ok' 
 
     # The quorum beat rides between B9 and B10: retroactive distrust
     # of an authority as a quorate M-of-K act (2-of-3 jurisdictions).
