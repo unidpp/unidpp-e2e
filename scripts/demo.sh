@@ -1403,7 +1403,9 @@ PYEOF
         "ok" "$(grep -c "attestation verifies under the verifier" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the verdict is a coverage report object (verified-direct + attested)" \
         "ok" "$(grep -c "coverage report object" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    say "15/15 in the grid verdict — the CN battery case: report object, acceptance, offline dossier, air-gapped frozen view (XB-1..5, XB-8, SI-1)"
+    check "G-GRID the recorded route replays the verdict byte-identically (SI-11)" \
+        "ok" "$(grep -c "recorded route replays the verdict byte-identically" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    say "16/16 in the grid verdict — the CN battery case: report object, acceptance, offline dossier, air-gapped frozen view, recorded route (XB-1..5, XB-8, SI-1, SI-11)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"
