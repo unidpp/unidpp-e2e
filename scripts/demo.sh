@@ -1374,7 +1374,15 @@ PYEOF
     else
         check "G-GRID the sealed contents never appear" never never
     fi
-    say "9/9 in the grid verdict — assurance without access (SG-1..3, proven in the transcript)"
+    # The cross-border moment (Phase 2): the CN battery case —
+    # attestation offer, substitution, coverage-graded verdict.
+    check "G-GRID S13 offers attestation, not data" \
+        "ok" "$(grep -c "sealed policy offers ATTESTATION" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID substitution verifies under the verifier's own anchors" \
+        "ok" "$(grep -c "attestation verifies under the verifier" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID the verdict is coverage-graded (verified-direct + attested)" \
+        "ok" "$(grep -c "verdict is coverage-graded" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
+    say "14/14 in the grid verdict — the CN battery case: static verified-direct, dynamic attested (XB-1..3)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"

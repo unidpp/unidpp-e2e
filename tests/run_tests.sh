@@ -119,6 +119,13 @@ test_happy_path() {
     else
         assert "G-GRID sealed contents never leak" never never
     fi
+    # Phase 2: the CN battery case (S13 offer, substitution, grading).
+    assert_grep "G-GRID S13 attestation offer" "$plain" \
+        'G-GRID S13 offers attestation, not data == ok'
+    assert_grep "G-GRID sovereign substitution" "$plain" \
+        "G-GRID substitution verifies under the verifier's own anchors == ok"
+    assert_grep "G-GRID coverage-graded verdict" "$plain" \
+        'G-GRID the verdict is coverage-graded .verified-direct . attested. == ok' 
 
     # The quorum beat rides between B9 and B10: retroactive distrust
     # of an authority as a quorate M-of-K act (2-of-3 jurisdictions).
