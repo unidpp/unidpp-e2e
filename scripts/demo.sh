@@ -1361,9 +1361,18 @@ PYEOF
     what "Phase 1 of the build contract (REQUIREMENTS.md): sovereignty per-segment — an open EU segment and a SEALED CN segment, a commitment spine over both, and a verifier who proves the sealed segment without ever seeing it."
 
     show "unidpp grid"
-    if ! "$UNIDPP" grid --dossier "$WORK_DIR/pack-0001-dossier.json" > "$WORK_DIR/ggrid.txt"; then
+    if ! "$UNIDPP" grid --dossier "$WORK_DIR/pack-0001-dossier.json" --frozen "$WORK_DIR/pack-0001-frozen.json" > "$WORK_DIR/ggrid.txt"; then
         fail "unidpp grid failed (see $WORK_DIR/ggrid.txt)"
     fi
+    # SI-1: the frozen view — air-gapped ingest + verify +
+    # re-execution in a separate process.
+    if ! "$UNIDPP" frozen "$WORK_DIR/pack-0001-frozen.json" > "$WORK_DIR/frozen.txt"; then
+        fail "unidpp frozen failed (see $WORK_DIR/frozen.txt)"
+    fi
+    check "G-GRID the frozen view verifies air-gapped (SI-1)" \
+        "ok" "$(grep -c "offline frozen view" "$WORK_DIR/frozen.txt" | sed 's/1/ok/;s/0/failed/')"
+    check "G-GRID the frozen view re-execution matches the issuer render (SI-1)" \
+        "ok" "$(grep -c "re-execution MATCHES" "$WORK_DIR/frozen.txt" | sed 's/1/ok/;s/0/failed/')"
     # XB-5: the offline verifier — a separate process, one file, the
     # verifier's own anchors, zero calls to foreign systems.
     if ! "$UNIDPP" dossier "$WORK_DIR/pack-0001-dossier.json" > "$WORK_DIR/dossier.txt"; then
@@ -1394,7 +1403,7 @@ PYEOF
         "ok" "$(grep -c "attestation verifies under the verifier" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the verdict is a coverage report object (verified-direct + attested)" \
         "ok" "$(grep -c "coverage report object" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    say "15/15 in the grid verdict — the CN battery case: report object, acceptance, and the offline dossier verdict (XB-1..5, XB-8)"
+    say "15/15 in the grid verdict — the CN battery case: report object, acceptance, offline dossier, air-gapped frozen view (XB-1..5, XB-8, SI-1)"
 
     # =====================================================================
     beat "B10" "End of life (the material loop closes)"
