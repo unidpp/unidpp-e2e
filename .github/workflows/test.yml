@@ -30,6 +30,10 @@ jobs:
           path: unidpp-cli
       - uses: actions/checkout@v4
         with:
+          repository: unidpp/unidpp-py
+          path: unidpp-py
+      - uses: actions/checkout@v4
+        with:
           repository: unidpp/unidpp-registry
           path: unidpp-registry
       - uses: actions/checkout@v4

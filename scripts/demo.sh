@@ -1361,8 +1361,20 @@ PYEOF
     what "Phase 1 of the build contract (REQUIREMENTS.md): sovereignty per-segment — an open EU segment and a SEALED CN segment, a commitment spine over both, and a verifier who proves the sealed segment without ever seeing it."
 
     show "unidpp grid"
-    if ! "$UNIDPP" grid --dossier "$WORK_DIR/pack-0001-dossier.json" --frozen "$WORK_DIR/pack-0001-frozen.json" > "$WORK_DIR/ggrid.txt"; then
+    if ! "$UNIDPP" grid --dossier "$WORK_DIR/pack-0001-dossier.json" --frozen "$WORK_DIR/pack-0001-frozen.json" --anchors "$WORK_DIR/pack-0001-anchors.json" > "$WORK_DIR/ggrid.txt"; then
         fail "unidpp grid failed (see $WORK_DIR/ggrid.txt)"
+    fi
+    # FW-2: the suite-foreign leg — the Python harness verifies the
+    # exported frozen view under the exported pinned anchors.
+    # Suite-foreign is the required demo; suite-suite proves nothing.
+    if [ -d "$FAMILY_DIR/unidpp-py" ] && command -v python3 >/dev/null 2>&1; then
+        if ! (cd "$FAMILY_DIR/unidpp-py" && python3 -m unidpp.harness.f1 "$WORK_DIR/pack-0001-frozen.json" "$WORK_DIR/pack-0001-anchors.json") > "$WORK_DIR/foreign.txt" 2>&1; then
+            fail "the foreign harness F1 run failed (see $WORK_DIR/foreign.txt)"
+        fi
+        check "G-GRID the FOREIGN harness verifies the frozen view (FW-2)" \
+            "ok" "$(grep -c "F1: PASS" "$WORK_DIR/foreign.txt" | sed 's/1/ok/;s/0/failed/')"
+    else
+        say "foreign harness leg skipped: unidpp-py or python3 not present in this checkout"
     fi
     # SI-1: the frozen view — air-gapped ingest + verify +
     # re-execution in a separate process.
