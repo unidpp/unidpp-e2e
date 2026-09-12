@@ -24,6 +24,9 @@
 #      as two tenants; tenant A's bearer token is refused (401) by
 #      tenant B's registry, and A's write never appears in B's
 #      journal.
+#  10. NF-1's gated numbers (the bench): Tier-A verification latency
+#      and the roll-up proof shape; the served-views p95 is the
+#      opt-in reference-class number (UNIDPP_BENCH_VIEWS=1).
 #   The B-INT interop beat (render to UNTP, ingest back through
 #   unidpp-gateway) rides inside tests 1 and 5; both assert its label
 #   and its identity-match check.
@@ -471,6 +474,20 @@ test_tenant_isolation_services() {
     wait $pid_a $pid_b 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# Test 10: NF-1 — the performance requirement's gated numbers.
+# ---------------------------------------------------------------------------
+
+test_nf1_bench() {
+    printf '\n\033[1m== test 10 ==\033[0m  NF-1: verification latency + the roll-up proof shape\n'
+    if "$HERE/../scripts/bench-nf1.sh"; then
+        pass=$((pass + 2))
+    else
+        printf '  \033[31m[FAIL]\033[0m the NF-1 bench gated out\n'
+        fail=$((fail + 1))
+    fi
+}
+
 main() {
     mkdir -p "$TEST_WORK"
 
@@ -483,6 +500,7 @@ main() {
     test_quickstart_publish_only
     test_quickstart_gateway
     test_tenant_isolation_services
+    test_nf1_bench
 
     printf '\n\033[1m== summary ==\033[0m  %d passed, %d failed, %d skipped\n' \
         "$pass" "$fail" "$skipped"
