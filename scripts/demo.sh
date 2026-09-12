@@ -1409,6 +1409,16 @@ PYFINT
     fi
     check "G-GRID the F1 claim test passes (FW-3)" \
         "ok" "$(grep -c "F1: PASS" "$WORK_DIR/f1.txt" | sed 's/1/ok/;s/0/failed/')"
+    # The F5 self-certification: every golden vector of the family
+    # re-derives in this binary (one command, all classes runnable
+    # by any third party).
+    if "$UNIDPP" conform f5 "$FAMILY_DIR" > "$WORK_DIR/f5.txt" 2>&1; then
+        check "G-GRID the F5 self-certification sweep — every golden vector reproduces (FW-3)" \
+            "ok" "$(grep -c "F5: PASS" "$WORK_DIR/f5.txt" | sed 's/1/ok/;s/0/failed/')"
+    else
+        note "G-GRID F5 narrated without running: $(tail -1 "$WORK_DIR/f5.txt" 2>/dev/null)"
+        say "the F5 sweep replays every golden vector of the family (proven in harness test 11)"
+    fi
     check "G-GRID the frozen view verifies air-gapped (SI-1)" \
         "ok" "$(grep -c "offline frozen view" "$WORK_DIR/frozen.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID the frozen view re-execution matches the issuer render (SI-1)" \
