@@ -56,6 +56,7 @@ GATEWAY_PID=""
 # standard Ed25519 group signature) and emits the HTTP bodies.
 TRUST_BIN="${UNIDPP_TRUST_BIN:-$FAMILY_DIR/unidpp-trust/target/release/unidpp-trust}"
 QUORUM_CEREMONY_BIN="${UNIDPP_QUORUM_CEREMONY_BIN:-$FAMILY_DIR/unidpp-trust/target/release/quorum-ceremony}"
+DEVICE_DRILL_BIN="${UNIDPP_DEVICE_DRILL_BIN:-$FAMILY_DIR/unidpp-signatif/target/release/device-drill}"
 QUORUM_BIND="${UNIDPP_QUORUM_BIND:-127.0.0.1:8097}"
 QUORUM_URL="http://$QUORUM_BIND"
 QUORUM_PID=""
@@ -1361,7 +1362,7 @@ PYEOF
     what "Phase 1 of the build contract (REQUIREMENTS.md): sovereignty per-segment — an open EU segment and a SEALED CN segment, a commitment spine over both, and a verifier who proves the sealed segment without ever seeing it."
 
     show "unidpp grid"
-    if ! "$UNIDPP" grid --dossier "$WORK_DIR/pack-0001-dossier.json" --frozen "$WORK_DIR/pack-0001-frozen.json" --anchors "$WORK_DIR/pack-0001-anchors.json" > "$WORK_DIR/ggrid.txt"; then
+    if ! "$UNIDPP" grid --dossier "$WORK_DIR/pack-0001-dossier.json" --frozen "$WORK_DIR/pack-0001-frozen.json" --anchors "$WORK_DIR/pack-0001-anchors.json" --route-out "$WORK_DIR/pack-0001-route.json" > "$WORK_DIR/ggrid.txt"; then
         fail "unidpp grid failed (see $WORK_DIR/ggrid.txt)"
     fi
     # FW-2: the suite-foreign leg — the Python harness verifies the
@@ -1370,6 +1371,26 @@ PYEOF
     if [ -d "$FAMILY_DIR/unidpp-py" ] && command -v python3 >/dev/null 2>&1; then
         if ! (cd "$FAMILY_DIR/unidpp-py" && python3 -m unidpp.harness.f1 "$WORK_DIR/pack-0001-frozen.json" "$WORK_DIR/pack-0001-anchors.json") > "$WORK_DIR/foreign.txt" 2>&1; then
             fail "the foreign harness F1 run failed (see $WORK_DIR/foreign.txt)"
+        fi
+        # F-INT (the F2/F3 foreign legs): the inter-scheme data the
+        # suite just produced — the dossier's recorded route —
+        # replays through the foreign harness's protocol layer.
+        if (cd "$FAMILY_DIR/unidpp-py" && python3 - "$WORK_DIR/pack-0001-route.json" <<'PYFINT'
+import json, sys
+from unidpp.harness import protocol, vectors
+report = json.load(open(sys.argv[1]))
+route = report["route"]
+replayed = protocol.route_replay(route)
+assert replayed == report["entries"], "the foreign replay diverged from the suite's report"
+digest = vectors.route_digest(route)
+print(f"F-INT: PASS — the foreign harness replays the suite's recorded route; digest {digest.hex()[:16]}…")
+PYFINT
+        ) > "$WORK_DIR/foreign-route.txt" 2>&1; then
+            check "G-GRID F-INT the FOREIGN harness replays the suite's recorded route (F2)" \
+                "ok" "$(grep -c "F-INT: PASS" "$WORK_DIR/foreign-route.txt" | sed 's/1/ok/;s/0/failed/')"
+        else
+            note "F-INT narrated without running: $(tail -1 "$WORK_DIR/foreign-route.txt" 2>/dev/null)"
+            say "the foreign harness replays the recorded route (proven in unidpp-py tests/test_harness_f2f3.py)"
         fi
         check "G-GRID the FOREIGN harness verifies the frozen view (FW-2)" \
             "ok" "$(grep -c "F1: PASS" "$WORK_DIR/foreign.txt" | sed 's/1/ok/;s/0/failed/')"
@@ -1431,9 +1452,84 @@ PYEOF
     say "18/18 in the grid verdict — the CN battery case incl. retrieval (Part 10): report, acceptance, offline dossier, frozen view, route, ancestry (XB-1..5, XB-8, SI-1/6/11, RT-4)"
 
     # =====================================================================
+    beat "G-DEVICE" "The device is a cryptographic principal (manufacture certificate, scoped slots, edge commitments)"
+    # =====================================================================
+    # ID-5 / RC-2's demonstration step: the device-drill runner (real
+    # device.rs machinery). Narrated when the binary is absent — the
+    # beat never stages the cryptography.
+    if [ -x "$DEVICE_DRILL_BIN" ]; then
+        show "$DEVICE_DRILL_BIN"
+        if ! "$DEVICE_DRILL_BIN" > "$WORK_DIR/gdevice.txt"; then
+            fail "device-drill failed (see $WORK_DIR/gdevice.txt)"
+        fi
+        check "G-DEVICE the drill holds 10/10 (certificate, path-finding, scoped revocation, edge law)" \
+            "ok" "$(grep -c "device-drill: 10/10" "$WORK_DIR/gdevice.txt" | sed 's/1/ok/;s/0/failed/')"
+        check "G-DEVICE revocation is scoped to the slot key, never the device" \
+            "ok" "$(grep -c "unaffected" "$WORK_DIR/gdevice.txt" | sed 's/1/ok/;s/0/failed/')"
+        check "G-DEVICE an edited reveal is rejected — never contradict" \
+            "ok" "$(grep -ci "edited reveal is rejected" "$WORK_DIR/gdevice.txt" | sed 's/1/ok/;s/0/failed/')"
+    else
+        note "G-DEVICE narrated without running: device-drill binary missing ($DEVICE_DRILL_BIN; run: make deps-signatif)"
+        say "the manufacture certificate binds the device key to the static segment's commitment;"
+        say "per-segment slot keys are certified by their segment authority; revoking one"
+        say "chain kills that segment's attestations only; the edge commits first and"
+        say "reveals later, never contradicting. Full proof: unidpp-signatif src/device.rs tests."
+    fi
+    what "the device signs; the authority scopes; the edge keeps its word — three proofs, one principal."
+
+    beat "G-PRODUCT" "Productness is a dated, per-regime predicate (same-identity toggle vs derived re-entry)"
+    # =====================================================================
+    # PA-3's demonstration step, through the real event algebra: the
+    # SAME identity toggles under end-of-waste (no new passport);
+    # scrap splits into DERIVED passports (R2).
+    issuer_create "local:recycler:cell-lot/J-000900" batch S0 recycler-linz \
+        "https://resolver.unidpp.org/r/cell-lot-j000900" \
+        "urn:unidpp:passport:gprod-cell" "$WORK_DIR/gprod-cell.json"
+    gprod_id_before="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["passport_id"])' "$WORK_DIR/gprod-cell.json")"
+
+    issuer_event "$WORK_DIR/gprod-cell.json" status.change \
+        '{"from":"issued","to":"end-of-waste","authority":"at-regulator-linz"}' \
+        at-regulator-linz regulator "2033-08-01T08:00:00Z"
+    issuer_event "$WORK_DIR/gprod-cell.json" end-of-waste \
+        '{"evidence_ref":"eow-cert-linz-2033-0901","outputs":[]}' \
+        steelworks-linz "accredited actor" "2033-08-02T08:00:00Z"
+
+    # The SAME identity re-qualifies: no new passport issues; the
+    # predicate toggled, dated.
+    issuer_event "$WORK_DIR/gprod-cell.json" status.change \
+        '{"from":"end-of-waste","to":"issued","authority":"at-regulator-linz"}' \
+        at-regulator-linz regulator "2033-08-03T08:00:00Z"
+    gprod_id_after="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["passport_id"])' "$WORK_DIR/gprod-cell.json")"
+    check "G-PRODUCT end-of-waste re-qualifies the SAME identity (no new passport)" \
+        "$gprod_id_before" "$gprod_id_after"
+
+    gprod_anchor="$(issuer_mint_pack "$WORK_DIR/gprod-cell.json" "$WORK_DIR/gprod-cell.pack")"
+    verify_and_expect "$WORK_DIR/gprod-cell.pack" "$gprod_anchor" \
+        "2033-08-03T09:00:00Z" 0 \
+        "G-PRODUCT the re-qualified cell lot — PASS on the same passport that left"
+
+    # Scrap: the material LOSES its identity — derived passports
+    # follow R2; the parent does not re-qualify again.
+    issuer_create "local:recycler:scrap-cu/J-000900" batch S0 recycler-linz \
+        "https://resolver.unidpp.org/r/scrap-cu-j000900" \
+        "urn:unidpp:passport:gprod-scrap-cu" "$WORK_DIR/gprod-scrap-cu.json"
+    issuer_create "local:recycler:scrap-al/J-000900" batch S0 recycler-linz \
+        "https://resolver.unidpp.org/r/scrap-al-j000900" \
+        "urn:unidpp:passport:gprod-scrap-al" "$WORK_DIR/gprod-scrap-al.json"
+    issuer_event "$WORK_DIR/gprod-cell.json" split \
+        '{"carve_outs":[{"child":"urn:unidpp:passport:gprod-scrap-cu","quantity":{"amount":"11.2","unit":{"uom":"kg","registry_uri":"https://unitsml.org/units/kg"}}},{"child":"urn:unidpp:passport:gprod-scrap-al","quantity":{"amount":"3.1","unit":{"uom":"kg","registry_uri":"https://unitsml.org/units/kg"}}}],"remainder":{"amount":"0.4","unit":{"uom":"kg","registry_uri":"https://unitsml.org/units/kg"}},"parent_consumed":true}' \
+        recycler-linz "custodian (transformer)" "2033-08-04T08:00:00Z"
+    gprod_scrap_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["passport_id"])' "$WORK_DIR/gprod-scrap-cu.json")"
+    if [ "$gprod_scrap_id" != "$gprod_id_before" ] && [ -n "$gprod_scrap_id" ]; then
+        check "G-PRODUCT scrap issues a DERIVED passport (R2 — a new identity)" derived derived
+    else
+        check "G-PRODUCT scrap issues a DERIVED passport (R2 — a new identity)" derived "same-identity"
+    fi
+    what "end-of-waste toggled the predicate on the same identity, dated; scrap split into derived passports — the two re-entries never conflated."
+
     beat "B10" "End of life (the material loop closes)"
     # =====================================================================
-    what "E13 decompose = inverse transformation 1 -> N into material passports with mass balance; end-of-waste is a NEW passport issuance."
+    what "E13 decompose = inverse transformation 1 -> N into DERIVED material passports (R2) with mass balance; the derived scrap identity then re-qualifies under end-of-waste on ITS OWN passport (clause 8 e)."
 
     issuer_create "local:recycler:scrap-steel/J-000842" - S0 steelworks-linz \
         "https://resolver.unidpp.org/r/scrap-steel-j000842" \

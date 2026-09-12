@@ -1,4 +1,4 @@
-.PHONY: help demo demo-live test clean deps deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway deps-live up down status
+.PHONY: help demo demo-live test clean deps deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway deps-signatif deps-live up down status
 
 HELP_WIDTH = 18
 help:                       ## Show this help.
@@ -13,9 +13,9 @@ demo-live: deps-live        ## Walk B1-B10 against the four LIVE sibling service
 test:                       ## Run the shell test harness (happy path + tamper tests).
 	./tests/run_tests.sh
 
-deps: deps-cli deps-registry deps-gateway ## Build every dependent binary (release).
+deps: deps-cli deps-registry deps-gateway deps-signatif ## Build every dependent binary (release).
 
-deps-live: deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway ## Build every live-service binary (release).
+deps-live: deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway deps-signatif ## Build every live-service binary (release).
 
 # The sibling repos are developed in parallel; a rebuild can fail while
 # a sibling is mid-edit. When that happens we fall back to the existing
@@ -71,6 +71,10 @@ deps-gateway:               ## Build unidpp-gateway when its source is present.
 	else \
 		echo "unidpp-gateway source not yet present ; skipping build."; \
 	fi
+
+deps-signatif:               ## Build unidpp-signatif's demonstration binaries (device drill).
+	@if cargo build --release --manifest-path ../unidpp-signatif/Cargo.toml --bin device-drill; then :; \
+	elif [ -x ../unidpp-signatif/target/release/device-drill ]; then 		echo "warning: device-drill rebuild failed (repo mid-edit); using existing binary"; 	else echo "error: device-drill has no binary and the build failed" >&2; exit 1; fi
 
 up:                         ## Start the registry in the background (compose).
 	docker compose up -d registry
