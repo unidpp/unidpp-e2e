@@ -16,6 +16,10 @@
 #      real; a B1-B4 subset verifies with the anchor pinned from the
 #      trust service's /keyring and anchors packs in the log. SKIPS
 #      (not fails) when the sibling binaries cannot be produced.
+#   6-8. The adoption-path quickstarts (FW-6): verify-only (one
+#      binary, zero services), publish-only (one issuer, nothing
+#      else), augment-existing (the gateway as translation edge over
+#      one issuer). Each SKIPS when its binaries cannot be produced.
 #   The B-INT interop beat (render to UNTP, ingest back through
 #   unidpp-gateway) rides inside tests 1 and 5; both assert its label
 #   and its identity-match check.
@@ -342,6 +346,49 @@ test_live_services() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Tests 6-8: the adoption-path quickstarts (FW-6) — each script is
+# self-asserting; the harness only records its exit. Exit 77 = SKIP
+# (a binary the path needs is unavailable — a sibling repo mid-edit,
+# never a failure of the path itself).
+# ---------------------------------------------------------------------------
+
+run_quickstart() { # run_quickstart <number> <label> <script>
+    rq_n="$1"
+    rq_label="$2"
+    rq_script="$3"
+    printf '\n\033[1m== test %s ==\033[0m  %s\n' "$rq_n" "$rq_label"
+    if "$rq_script" >"$TEST_WORK/quickstart-$rq_n.stdout" 2>&1; then
+        cat "$TEST_WORK/quickstart-$rq_n.stdout"
+    else
+        rq_code=$?
+        if [ "$rq_code" -eq 77 ]; then
+            cat "$TEST_WORK/quickstart-$rq_n.stdout"
+            printf '  \033[33m[SKIP]\033[0m %s\n' "$rq_label"
+            skipped=$((skipped + 1))
+        else
+            cat "$TEST_WORK/quickstart-$rq_n.stdout"
+            printf '  \033[31m[FAIL]\033[0m %s exited %s\n' "$rq_label" "$rq_code"
+            fail=$((fail + 1))
+        fi
+    fi
+}
+
+test_quickstart_verify_only() {
+    run_quickstart 6 "adoption path: verify-only (one binary, zero services)" \
+        "$HERE/../scripts/quickstart-verify-only.sh"
+}
+
+test_quickstart_publish_only() {
+    run_quickstart 7 "adoption path: publish-only (one issuer, nothing else)" \
+        "$HERE/../scripts/quickstart-publish-only.sh"
+}
+
+test_quickstart_gateway() {
+    run_quickstart 8 "adoption path: augment-existing (the gateway translation edge)" \
+        "$HERE/../scripts/quickstart-gateway.sh"
+}
+
 main() {
     mkdir -p "$TEST_WORK"
 
@@ -350,6 +397,9 @@ main() {
     test_missing_anchor
     test_registry_binding
     test_live_services
+    test_quickstart_verify_only
+    test_quickstart_publish_only
+    test_quickstart_gateway
 
     printf '\n\033[1m== summary ==\033[0m  %d passed, %d failed, %d skipped\n' \
         "$pass" "$fail" "$skipped"
