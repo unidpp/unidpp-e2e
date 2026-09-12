@@ -27,6 +27,8 @@
 #  10. NF-1's gated numbers (the bench): Tier-A verification latency
 #      and the roll-up proof shape; the served-views p95 is the
 #      opt-in reference-class number (UNIDPP_BENCH_VIEWS=1).
+#  11. The class claim tests (FW-3): all five federation classes
+#      through one command, against the family's own fixtures.
 #   The B-INT interop beat (render to UNTP, ingest back through
 #   unidpp-gateway) rides inside tests 1 and 5; both assert its label
 #   and its identity-match check.
@@ -488,6 +490,61 @@ test_nf1_bench() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Test 11: the class claim tests — every federation class through
+# one command, against the family's fixtures.
+# ---------------------------------------------------------------------------
+
+test_class_claims() {
+    printf '\n\033[1m== test 11 ==\033[0m  class claims: conform f1-f5 (FW-3)\n'
+    signatif_fixtures="$ROOT_DIR/../unidpp-signatif/fixtures/canonical"
+    semantics_fixtures="$ROOT_DIR/../unidpp-core/crates/semantics/fixtures/canonical"
+    if [ ! -x "$UNIDPP" ] || [ ! -d "$signatif_fixtures" ]; then
+        printf '  \033[33m[SKIP]\033[0m claim material unavailable\n'
+        skipped=$((skipped + 1))
+        return 0
+    fi
+
+    work="$TEST_WORK/claims"
+    mkdir -p "$work"
+    python3 - "$signatif_fixtures/frozen-view.json" "$work" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+json.dump(doc["view"], open(f"{sys.argv[2]}/view.json", "w"))
+json.dump(doc["anchors"], open(f"{sys.argv[2]}/anchors.json", "w"))
+PY
+
+    for spec in \
+        "f1|$work/view.json|$work/anchors.json" \
+        "f2|$signatif_fixtures/s13-signed-exchange.json|" \
+        "f3|$semantics_fixtures/mapping-chain.json|" \
+        "f5|..|"; do
+        IFS='|' read -r class a b c <<EOF
+$spec
+EOF
+        # shellcheck disable=SC2086
+        args="$a $b"
+        # shellcheck disable=SC2086
+        if "$UNIDPP" conform "$class" $args >"$work/$class.txt" 2>&1; then
+            assert "conform $class claim holds" pass pass
+        else
+            printf '  \033[31m[FAIL]\033[0m conform %s:\n' "$class"
+            tail -6 "$work/$class.txt"
+            fail=$((fail + 1))
+        fi
+    done
+    # f4 takes three paths — run it explicitly outside the
+    # two-argument loop.
+    if "$UNIDPP" conform f4 "$work/view.json" "$work/view.json" "$work/anchors.json" \
+            >"$work/f4-full.txt" 2>&1; then
+        assert "conform f4 claim holds (three-path form)" pass pass
+    else
+        printf '  \033[31m[FAIL]\033[0m conform f4 (three-path):\n'
+        tail -6 "$work/f4-full.txt"
+        fail=$((fail + 1))
+    fi
+}
+
 main() {
     mkdir -p "$TEST_WORK"
 
@@ -501,6 +558,7 @@ main() {
     test_quickstart_gateway
     test_tenant_isolation_services
     test_nf1_bench
+    test_class_claims
 
     printf '\n\033[1m== summary ==\033[0m  %d passed, %d failed, %d skipped\n' \
         "$pass" "$fail" "$skipped"

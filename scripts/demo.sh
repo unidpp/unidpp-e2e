@@ -1482,7 +1482,7 @@ PYFINT
     # PA-3's demonstration step, through the real event algebra: the
     # SAME identity toggles under end-of-waste (no new passport);
     # scrap splits into DERIVED passports (R2).
-    issuer_create "local:recycler:cell-lot/J-000900" batch S0 recycler-linz \
+    issuer_create "local:recycler:cell-lot/J-000900" - S0 recycler-linz \
         "https://resolver.unidpp.org/r/cell-lot-j000900" \
         "urn:unidpp:passport:gprod-cell" "$WORK_DIR/gprod-cell.json"
     gprod_id_before="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["passport_id"])' "$WORK_DIR/gprod-cell.json")"
@@ -1510,10 +1510,10 @@ PYFINT
 
     # Scrap: the material LOSES its identity — derived passports
     # follow R2; the parent does not re-qualify again.
-    issuer_create "local:recycler:scrap-cu/J-000900" batch S0 recycler-linz \
+    issuer_create "local:recycler:scrap-cu/J-000900" - S0 recycler-linz \
         "https://resolver.unidpp.org/r/scrap-cu-j000900" \
         "urn:unidpp:passport:gprod-scrap-cu" "$WORK_DIR/gprod-scrap-cu.json"
-    issuer_create "local:recycler:scrap-al/J-000900" batch S0 recycler-linz \
+    issuer_create "local:recycler:scrap-al/J-000900" - S0 recycler-linz \
         "https://resolver.unidpp.org/r/scrap-al-j000900" \
         "urn:unidpp:passport:gprod-scrap-al" "$WORK_DIR/gprod-scrap-al.json"
     issuer_event "$WORK_DIR/gprod-cell.json" split \
