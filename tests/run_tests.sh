@@ -20,6 +20,10 @@
 #      binary, zero services), publish-only (one issuer, nothing
 #      else), augment-existing (the gateway as translation edge over
 #      one issuer). Each SKIPS when its binaries cannot be produced.
+#   9. Tenant isolation at the service level (SV-7): two registries
+#      as two tenants; tenant A's bearer token is refused (401) by
+#      tenant B's registry, and A's write never appears in B's
+#      journal.
 #   The B-INT interop beat (render to UNTP, ingest back through
 #   unidpp-gateway) rides inside tests 1 and 5; both assert its label
 #   and its identity-match check.
@@ -389,6 +393,84 @@ test_quickstart_gateway() {
         "$HERE/../scripts/quickstart-gateway.sh"
 }
 
+# ---------------------------------------------------------------------------
+# Test 9: SV-7 at the service level — two registries as two tenants;
+# credentials do not cross, journals do not mix.
+# ---------------------------------------------------------------------------
+
+test_tenant_isolation_services() {
+    printf '\n\033[1m== test 9 ==\033[0m  tenant isolation: cross-tenant credentials refused at the service level\n'
+
+    registry_bin="$ROOT_DIR/../unidpp-registry/target/release/unidpp-registry"
+    if [ ! -x "$registry_bin" ]; then
+        printf '  \033[33m[SKIP]\033[0m registry binary unavailable\n'
+        skipped=$((skipped + 1))
+        return 0
+    fi
+
+    iso_work="$TEST_WORK/isolation"
+    rm -rf "$iso_work"
+    mkdir -p "$iso_work"
+
+    UNIDPP_REGISTRY_BIND=127.0.0.1:18541 \
+    UNIDPP_REGISTRY_STATE_FILE="$iso_work/tenant-a.json" \
+    UNIDPP_REGISTRY_ADMIN_TOKEN=tenant-a-token \
+        "$registry_bin" >"$iso_work/tenant-a.log" 2>&1 &
+    pid_a=$!
+    UNIDPP_REGISTRY_BIND=127.0.0.1:18542 \
+    UNIDPP_REGISTRY_STATE_FILE="$iso_work/tenant-b.json" \
+    UNIDPP_REGISTRY_ADMIN_TOKEN=tenant-b-token \
+        "$registry_bin" >"$iso_work/tenant-b.log" 2>&1 &
+    pid_b=$!
+    trap 'kill $pid_a $pid_b 2>/dev/null; wait $pid_a $pid_b 2>/dev/null' RETURN
+
+    ready=0
+    for _ in $(seq 1 50); do
+        curl -sf http://127.0.0.1:18541/healthz >/dev/null 2>&1 && \
+        curl -sf http://127.0.0.1:18542/healthz >/dev/null 2>&1 && { ready=1; break; }
+        sleep 0.2
+    done
+    if [ "$ready" != 1 ]; then
+        printf '  \033[31m[FAIL]\033[0m the two tenant registries never became healthy\n'
+        fail=$((fail + 1))
+        return 0
+    fi
+    assert "both tenant registries healthy" 1 1
+
+    body_a='{"register_id":"tenant-a","item_id":"shared-name","version":"1","definition":"tenant A item","class":"data-element"}'
+    body_b='{"register_id":"tenant-b","item_id":"shared-name","version":"1","definition":"tenant B item","class":"data-element"}'
+
+    # A's own credential writes at A.
+    code_a="$(curl -s -o "$iso_work/a-own.json" -w '%{http_code}' -X POST \
+        http://127.0.0.1:18541/items -H 'authorization: Bearer tenant-a-token' \
+        -H 'content-type: application/json' --data "$body_a")"
+    assert "tenant A writes at its own registry" 201 "$code_a"
+
+    # A's credential is REFUSED at B (the cross-tenant probe).
+    code_cross="$(curl -s -o "$iso_work/a-at-b.json" -w '%{http_code}' -X POST \
+        http://127.0.0.1:18542/items -H 'authorization: Bearer tenant-a-token' \
+        -H 'content-type: application/json' --data "$body_a")"
+    assert "tenant A's credential refused at tenant B (401)" 401 "$code_cross"
+
+    # B's own write succeeds at B — the refusal was the credential,
+    # not the item name.
+    code_b="$(curl -s -o "$iso_work/b-own.json" -w '%{http_code}' -X POST \
+        http://127.0.0.1:18542/items -H 'authorization: Bearer tenant-b-token' \
+        -H 'content-type: application/json' --data "$body_b")"
+    assert "tenant B writes the same item id at its own registry" 201 "$code_b"
+
+    # The journals do not mix: B's store holds B's item, not A's.
+    b_def="$(curl -s http://127.0.0.1:18542/items/shared-name | \
+        python3 -c 'import json,sys; print(json.load(sys.stdin).get("register", "absent"))')"
+    assert "tenant B's journal holds B's item only" "tenant-b" "$b_def"
+    a_def="$(curl -s http://127.0.0.1:18541/items/shared-name | \
+        python3 -c 'import json,sys; print(json.load(sys.stdin).get("register", "absent"))')"
+    assert "tenant A's journal holds A's item only" "tenant-a" "$a_def"
+
+    kill $pid_a $pid_b 2>/dev/null
+    wait $pid_a $pid_b 2>/dev/null
+}
+
 main() {
     mkdir -p "$TEST_WORK"
 
@@ -400,6 +482,7 @@ main() {
     test_quickstart_verify_only
     test_quickstart_publish_only
     test_quickstart_gateway
+    test_tenant_isolation_services
 
     printf '\n\033[1m== summary ==\033[0m  %d passed, %d failed, %d skipped\n' \
         "$pass" "$fail" "$skipped"
