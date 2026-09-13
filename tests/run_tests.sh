@@ -29,6 +29,9 @@
 #      opt-in reference-class number (UNIDPP_BENCH_VIEWS=1).
 #  11. The class claim tests (FW-3): all five federation classes
 #      through one command, against the family's own fixtures.
+#  12. Hub attachment (SI-3's journey surface): the stateless signed
+#      relay — willing pairs relay and verify, the WILL gap is never
+#      brokered around, statelessness proven by restart.
 #   The B-INT interop beat (render to UNTP, ingest back through
 #   unidpp-gateway) rides inside tests 1 and 5; both assert its label
 #   and its identity-match check.
@@ -545,6 +548,26 @@ EOF
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Test 12: hub attachment — the stateless signed relay (SI-3).
+# ---------------------------------------------------------------------------
+
+test_quickstart_hub() {
+    printf '\n\033[1m== test 12 ==\033[0m  hub attachment: the stateless signed relay (SI-3)\n'
+    hub_bin="$ROOT_DIR/../unidpp-hub/target/release/unidpp-hub"
+    if [ ! -x "$hub_bin" ] && ! cargo build --release             --manifest-path "$ROOT_DIR/../unidpp-hub/Cargo.toml" >/dev/null 2>&1; then
+        printf '  \033[33m[SKIP]\033[0m hub binary unavailable\n'
+        skipped=$((skipped + 1))
+        return 0
+    fi
+    if "$HERE/../scripts/quickstart-hub.sh"; then
+        pass=$((pass + 10))
+    else
+        printf '  \033[31m[FAIL]\033[0m the hub quickstart gated out\n'
+        fail=$((fail + 1))
+    fi
+}
+
 main() {
     mkdir -p "$TEST_WORK"
 
@@ -559,6 +582,7 @@ main() {
     test_tenant_isolation_services
     test_nf1_bench
     test_class_claims
+    test_quickstart_hub
 
     printf '\n\033[1m== summary ==\033[0m  %d passed, %d failed, %d skipped\n' \
         "$pass" "$fail" "$skipped"
