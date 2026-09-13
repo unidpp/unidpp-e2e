@@ -1459,7 +1459,9 @@ PYFINT
         "ok" "$(grep -c "ancestry renders the three-way report" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
     check "G-GRID retrieval withholds the sealed class WITH an offer (RT-4)" \
         "ok" "$(grep -c "sealed class withheld WITH coverage and an offer pointer" "$WORK_DIR/ggrid.txt" | sed 's/1/ok/;s/0/failed/')"
-    say "18/18 in the grid verdict — the CN battery case incl. retrieval (Part 10): report, acceptance, offline dossier, frozen view, route, ancestry (XB-1..5, XB-8, SI-1/6/11, RT-4)"
+    ggrid_ok_count="$(grep -c '\[ok\]' "$WORK_DIR/ggrid.txt" || true)"
+    ggrid_fail_count="$(grep -c '\[FAIL\]' "$WORK_DIR/ggrid.txt" || true)"
+    say "${ggrid_ok_count}/${ggrid_ok_count} in the grid verdict (${ggrid_fail_count} failed) — the CN battery case incl. retrieval (Part 10): report, acceptance, offline dossier, frozen view, route, ancestry (XB-1..5, XB-8, SI-1/6/11, RT-4)"
 
     # =====================================================================
     beat "G-DEVICE" "The device is a cryptographic principal (manufacture certificate, scoped slots, edge commitments)"
