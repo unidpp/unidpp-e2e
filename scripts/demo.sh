@@ -44,6 +44,9 @@ REGISTRY_URL="${UNIDPP_REGISTRY_URL:-http://$REGISTRY_BIND}"
 # live-service ports (8092/8096/8098/8194) and of the gateway's own
 # :8094 default, which a parallel deployment may hold.
 GATEWAY_BIN="${UNIDPP_GATEWAY_BIN:-$FAMILY_DIR/unidpp-gateway/target/release/unidpp-gateway}"
+RESOLVER_BIN="${UNIDPP_RESOLVER_BIN:-$FAMILY_DIR/unidpp-resolver/target/release/unidpp-resolver}"
+RESOLVER_BIND="${UNIDPP_RESOLVER_BIND:-127.0.0.1:8095}"
+RESOLVER_URL="http://$RESOLVER_BIND"
 GATEWAY_BIND="${UNIDPP_GATEWAY_BIND:-127.0.0.1:8398}"
 GATEWAY_URL="http://$GATEWAY_BIND"
 GATEWAY_PID=""
@@ -386,13 +389,13 @@ start_registry() {
     else
         [ -x "$REGISTRY_BIN" ] || fail "registry binary missing: $REGISTRY_BIN (run: make deps)"
         note "starting unidpp-registry on $REGISTRY_BIND"
-        UNIDPP_REGISTRY_BIND="$REGISTRY_BIND" "$REGISTRY_BIN" >/dev/null 2>&1 &
+        env UNIDPP_REGISTRY_BIND="$REGISTRY_BIND" "$REGISTRY_BIN" >/dev/null 2>&1 &
         REGISTRY_PID=$!
     fi
 
     registry_ready=0
     registry_try=0
-    while [ "$registry_try" -lt 50 ]; do
+    while [ "$registry_try" -lt 250 ]; do
         if curl -sf "$REGISTRY_URL/healthz" >/dev/null 2>&1; then
             registry_ready=1
             break
@@ -409,6 +412,45 @@ stop_registry() {
         kill "$REGISTRY_PID" 2>/dev/null
         wait "$REGISTRY_PID" 2>/dev/null
         REGISTRY_PID=""
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# unidpp-resolver — the G-CORR beat (one thing, two codes)
+# ---------------------------------------------------------------------------
+
+# An ephemeral resolver whose journal lands in the artifacts dir (the
+# statements it accumulates — correlation, rotation — are part of the
+# recorded story).
+start_resolver() {
+    if curl -sf "$RESOLVER_URL/healthz" >/dev/null 2>&1; then
+        note "using already-running unidpp-resolver at $RESOLVER_URL"
+        return 0
+    fi
+    [ -x "$RESOLVER_BIN" ] || fail "resolver binary missing: $RESOLVER_BIN (run: make deps)"
+    note "starting unidpp-resolver on $RESOLVER_BIND (journal: resolver-journal.jsonl)"
+    env UNIDPP_BIND="$RESOLVER_BIND" \
+        UNIDPP_STATE_FILE="$WORK_DIR/resolver-journal.jsonl" \
+        "$RESOLVER_BIN" >/dev/null 2>&1 &
+    RESOLVER_PID=$!
+    resolver_ready=0
+    resolver_try=0
+    while [ "$resolver_try" -lt 250 ]; do
+        if curl -sf "$RESOLVER_URL/healthz" >/dev/null 2>&1; then
+            resolver_ready=1
+            break
+        fi
+        resolver_try=$((resolver_try + 1))
+        sleep 0.2
+    done
+    [ "$resolver_ready" = 1 ] || fail "resolver did not become healthy on $RESOLVER_URL"
+}
+
+stop_resolver() {
+    if [ -n "${RESOLVER_PID:-}" ]; then
+        kill "$RESOLVER_PID" 2>/dev/null
+        wait "$RESOLVER_PID" 2>/dev/null
+        RESOLVER_PID=""
     fi
 }
 
@@ -430,13 +472,13 @@ start_quorum_trust() {
     [ -x "$TRUST_BIN" ] || return 1
     note "starting ephemeral unidpp-trust on $QUORUM_BIND (B-QUORUM only)"
     rm -f "$WORK_DIR/quorum-trust.journal.jsonl"
-    UNIDPP_TRUST_BIND="$QUORUM_BIND" \
-    UNIDPP_TRUST_STATE_FILE="$WORK_DIR/quorum-trust.journal.jsonl" \
-    UNIDPP_TRUST_NO_SEED_FIXTURES=1 \
+    env UNIDPP_TRUST_BIND="$QUORUM_BIND" \
+        UNIDPP_TRUST_STATE_FILE="$WORK_DIR/quorum-trust.journal.jsonl" \
+        UNIDPP_TRUST_NO_SEED_FIXTURES=1 \
         "$TRUST_BIN" >/dev/null 2>&1 &
     QUORUM_PID=$!
     quorum_try=0
-    while [ "$quorum_try" -lt 50 ]; do
+    while [ "$quorum_try" -lt 250 ]; do
         if curl -sf "$QUORUM_URL/healthz" >/dev/null 2>&1; then
             return 0
         fi
@@ -504,11 +546,11 @@ start_gateway() {
     else
         note "starting unidpp-gateway on $GATEWAY_BIND (seeded fixtures — no issuer upstream)"
     fi
-    UNIDPP_GATEWAY_BIND="$GATEWAY_BIND" "$GATEWAY_BIN" >/dev/null 2>&1 &
+    env UNIDPP_GATEWAY_BIND="$GATEWAY_BIND" "$GATEWAY_BIN" >/dev/null 2>&1 &
     GATEWAY_PID=$!
     gateway_ready=0
     gateway_try=0
-    while [ "$gateway_try" -lt 50 ]; do
+    while [ "$gateway_try" -lt 250 ]; do
         if curl -sf "$GATEWAY_URL/healthz" >/dev/null 2>&1; then
             gateway_ready=1
             break
@@ -546,7 +588,7 @@ gateway_ingest() { # gateway_ingest <body-file> <out-file>
         -H 'content-type: application/json' --data-binary @"$gi_body"
 }
 
-cleanup() { stop_gateway; stop_registry; stop_quorum_trust; }
+cleanup() { stop_gateway; stop_resolver; stop_registry; stop_quorum_trust; }
 trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
@@ -1009,6 +1051,92 @@ PYEOF
     stop_gateway
 
     what "render and ingest are inverse projections over one identity: the UNTP consumer and the UniDPP core agree on the subject — no parallel-universe passport."
+
+    # =====================================================================
+    beat "G-CORR" "One thing, two codes: correlate, never consolidate"
+    # =====================================================================
+    what "the tyre ships with two marks side by side — its GTIN marking and an ISO 15459 marking under a different scheme. Both are legitimate (spec 6.3 k): the resolver correlates them and states both sides; a later scheme rotation is stated, never silent."
+
+    start_resolver
+
+    TYRE_GTIN_KEY="gs1:(01)04006381333931"
+    TYRE_URN_KEY="iso-15459:urn:iso:std:iso-iec:15459:unidpp:inst:4006381333931"
+
+    # The GTIN marking resolves to the gateway's live UNTP render (one
+    # anchor, many representations).
+    cat > "$WORK_DIR/gcorr-linkset.json" <<JSON
+{"identifier": "$TYRE_GTIN_KEY", "links": [
+  {"linkType": "dpp", "href": "$GATEWAY_URL/untp/product/gtin:4006381333931",
+   "asOf": "2026-05-04T08:00:00Z", "title": "tyre UNTP render (live gateway)"}
+]}
+JSON
+    gcorr_code="$(curl -s -o "$WORK_DIR/gcorr-register.json" -w '%{http_code}' -X POST \
+        "$RESOLVER_URL/admin/linksets" -H 'content-type: application/json' \
+        --data-binary @"$WORK_DIR/gcorr-linkset.json")"
+    check "G-CORR the GTIN marking registers" 201 "$gcorr_code"
+
+    # The correlation: both marks on one nameplate, asserted by the OEM.
+    # The 15459 side is NOT registered here — the cross-registry case.
+    cat > "$WORK_DIR/gcorr-correlate.json" <<JSON
+{"identifier": "$TYRE_GTIN_KEY", "identifierB": "$TYRE_URN_KEY",
+ "assertor": "urn:unidpp:actor:tyre-oem-conti",
+ "evidence": "both codes printed on one nameplate (two marks, one thing)",
+ "direction": "mutual"}
+JSON
+    gcorr_code="$(curl -s -o "$WORK_DIR/gcorr-correlated.json" -w '%{http_code}' -X POST \
+        "$RESOLVER_URL/admin/correlations" -H 'content-type: application/json' \
+        --data-binary @"$WORK_DIR/gcorr-correlate.json")"
+    check "G-CORR the correlation records" 201 "$gcorr_code"
+
+    # Side 1: the GTIN marking resolves, carries its render link, AND
+    # states its counterpart.
+    curl -s -D "$WORK_DIR/gcorr-side1.hdr" -o "$WORK_DIR/gcorr-side1.json" \
+        "$RESOLVER_URL/resolve?identifier=$TYRE_GTIN_KEY"
+    gcorr_other="$(python3 - "$WORK_DIR/gcorr-side1.json" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+print(doc.get("unidpp:correlated-with", [{}])[0].get("other", ""))
+PYEOF
+)"
+    check "G-CORR side 1 linkset names the counterpart" "$TYRE_URN_KEY" "$gcorr_other"
+    gcorr_hdr="$(awk 'BEGIN{IGNORECASE=1} /^x-unidpp-correlated-with:/{sub(/\r$/,""); sub(/^[^:]*: /,""); print; exit}' "$WORK_DIR/gcorr-side1.hdr")"
+    check "G-CORR side 1 header names the counterpart" "$TYRE_URN_KEY" "$gcorr_hdr"
+
+    # Side 2: the 15459 marking was never registered here — its
+    # refusal NAMES its counterpart (holding either side discovers the
+    # other; absence stated, never silence).
+    curl -s -o "$WORK_DIR/gcorr-side2.json" \
+        "$RESOLVER_URL/resolve?identifier=$TYRE_URN_KEY"
+    gcorr_side2="$(python3 - "$WORK_DIR/gcorr-side2.json" <<'PYEOF'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+print(doc.get("unidpp:correlated-with", [{}])[0].get("other", ""))
+PYEOF
+)"
+    check "G-CORR the never-registered side names its counterpart" "$TYRE_GTIN_KEY" "$gcorr_side2"
+
+    # The rotation: the GTIN marking is retired in favour of the 15459
+    # marking (scheme rotation). The old identity KEEPS resolving and
+    # states its successor — rotation is never revocation.
+    cat > "$WORK_DIR/gcorr-rotate.json" <<JSON
+{"identifier": "$TYRE_GTIN_KEY", "successor": "$TYRE_URN_KEY",
+ "effectiveAt": "2027-06-01T00:00:00Z",
+ "authority": "urn:unidpp:actor:tyre-oem-conti",
+ "reason": "the fleet migrates to the 15459 marking"}
+JSON
+    gcorr_code="$(curl -s -o "$WORK_DIR/gcorr-rotated.json" -w '%{http_code}' -X POST \
+        "$RESOLVER_URL/admin/supersessions" -H 'content-type: application/json' \
+        --data-binary @"$WORK_DIR/gcorr-rotate.json")"
+    check "G-CORR the rotation records" 200 "$gcorr_code"
+    # Read as-of AFTER the rotation's effective instant (as-of is
+    # honest: before 2027-06-01 the old marking carries no statement).
+    curl -s -o "$WORK_DIR/gcorr-after-rotation.json" \
+        "$RESOLVER_URL/resolve?identifier=$TYRE_GTIN_KEY&asof=2027-07-01T00:00:00Z"
+    gcorr_succ="$(json_get "$WORK_DIR/gcorr-after-rotation.json" "unidpp:superseded-by" 2>/dev/null || true)"
+    check "G-CORR the retired marking still resolves, stating its successor" "$TYRE_URN_KEY" "$gcorr_succ"
+
+    say "the resolver's journal (resolver-journal.jsonl) holds the whole statement history — correlation, rotation — replayable as-of."
+    what "one thing, two sovereign identifiers: correlated from either side, rotation stated on the old — the DPP algebra relates passports instead of consolidating them."
 
     # =====================================================================
     beat "B3" "Placement in the EU (profile growth by dated binding)"

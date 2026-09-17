@@ -90,7 +90,7 @@ wait_healthy() { # wait_healthy <name> <url>
     wh_name="$1"
     wh_url="$2"
     wh_try=0
-    while [ "$wh_try" -lt 100 ]; do
+    while [ "$wh_try" -lt 500 ]; do
         if curl -sf "$wh_url/healthz" >/dev/null 2>&1; then
             printf '    \033[32m%s healthy at %s\033[0m\n' "$wh_name" "$wh_url"
             return 0
@@ -110,7 +110,7 @@ rm -f "$LIVE_DIR/registry.journal.jsonl" "$LIVE_DIR/issuer.journal.jsonl" \
 # --- 1. registry (items, applicability, transforms) -----------------------
 [ -x "$REGISTRY_BIN" ] || fail "unidpp-registry binary missing: $REGISTRY_BIN (run: make deps-live)"
 note "starting unidpp-registry on $REGISTRY_BIND (journal: $LIVE_DIR/registry.journal.jsonl)"
-UNIDPP_REGISTRY_BIND="$REGISTRY_BIND" \
+env UNIDPP_REGISTRY_BIND="$REGISTRY_BIND" \
 UNIDPP_REGISTRY_STATE_FILE="$LIVE_DIR/registry.journal.jsonl" \
     "$REGISTRY_BIN" >/dev/null 2>&1 &
 PIDS="$PIDS $!"
@@ -119,7 +119,7 @@ wait_healthy unidpp-registry "http://$REGISTRY_BIND"
 # --- 2. issuer (server-signed events, server-minted packs) ----------------
 [ -x "$ISSUER_BIN" ] || fail "unidpp-issuer binary missing: $ISSUER_BIN (run: make deps-live)"
 note "starting unidpp-issuer on $ISSUER_BIND (journal: $LIVE_DIR/issuer.journal.jsonl)"
-UNIDPP_ISSUER_BIND="$ISSUER_BIND" \
+env UNIDPP_ISSUER_BIND="$ISSUER_BIND" \
 UNIDPP_ISSUER_STATE_FILE="$LIVE_DIR/issuer.journal.jsonl" \
 UNIDPP_ISSUER_EVENT_SEED="$LIVE_ED25519_SEED" \
 UNIDPP_ISSUER_PACK_SEED="$LIVE_P256_SEED" \
@@ -130,7 +130,7 @@ wait_healthy unidpp-issuer "http://$ISSUER_BIND"
 # --- 3. trust (verify anchors via GET /keyring) ---------------------------
 [ -x "$TRUST_BIN" ] || fail "unidpp-trust binary missing: $TRUST_BIN (run: make deps-live)"
 note "starting unidpp-trust on $TRUST_BIND (journal: $LIVE_DIR/trust.journal.jsonl)"
-UNIDPP_TRUST_BIND="$TRUST_BIND" \
+env UNIDPP_TRUST_BIND="$TRUST_BIND" \
 UNIDPP_TRUST_STATE_FILE="$LIVE_DIR/trust.journal.jsonl" \
 UNIDPP_TRUST_SIGN_SEED="$LIVE_ED25519_SEED" \
 UNIDPP_TRUST_SIGN_SEED_P256="$LIVE_P256_SEED" \
@@ -141,7 +141,7 @@ wait_healthy unidpp-trust "http://$TRUST_BIND"
 # --- 4. log (transparency log: pack commitments -> receipts) --------------
 [ -x "$LOG_BIN" ] || fail "unidpp-log binary missing: $LOG_BIN (run: make deps-live)"
 note "starting unidpp-log on $LOG_BIND (journal: $LIVE_DIR/log.journal.jsonl)"
-UNIDPP_LOG_BIND="$LOG_BIND" \
+env UNIDPP_LOG_BIND="$LOG_BIND" \
 UNIDPP_LOG_STATE_FILE="$LIVE_DIR/log.journal.jsonl" \
     "$LOG_BIN" >/dev/null 2>&1 &
 PIDS="$PIDS $!"

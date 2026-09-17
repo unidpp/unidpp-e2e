@@ -420,12 +420,12 @@ test_tenant_isolation_services() {
     rm -rf "$iso_work"
     mkdir -p "$iso_work"
 
-    UNIDPP_REGISTRY_BIND=127.0.0.1:18541 \
+    env UNIDPP_REGISTRY_BIND=127.0.0.1:18541 \
     UNIDPP_REGISTRY_STATE_FILE="$iso_work/tenant-a.json" \
     UNIDPP_REGISTRY_ADMIN_TOKEN=tenant-a-token \
         "$registry_bin" >"$iso_work/tenant-a.log" 2>&1 &
     pid_a=$!
-    UNIDPP_REGISTRY_BIND=127.0.0.1:18542 \
+    env UNIDPP_REGISTRY_BIND=127.0.0.1:18542 \
     UNIDPP_REGISTRY_STATE_FILE="$iso_work/tenant-b.json" \
     UNIDPP_REGISTRY_ADMIN_TOKEN=tenant-b-token \
         "$registry_bin" >"$iso_work/tenant-b.log" 2>&1 &
@@ -433,7 +433,7 @@ test_tenant_isolation_services() {
     trap 'kill $pid_a $pid_b 2>/dev/null; wait $pid_a $pid_b 2>/dev/null' RETURN
 
     ready=0
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 250); do
         curl -sf http://127.0.0.1:18541/healthz >/dev/null 2>&1 && \
         curl -sf http://127.0.0.1:18542/healthz >/dev/null 2>&1 && { ready=1; break; }
         sleep 0.2
