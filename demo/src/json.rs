@@ -266,6 +266,61 @@ pub fn last_decompose_outputs(doc: &Value) -> Vec<(String, String)> {
     }
 }
 
+/// The publish-only keyring reader: under `roles` (or the document
+/// itself when the keyring ships bare), the `pack` role's public anchor
+/// — the first of `public`, `public_hex`, `anchor` that is a string,
+/// whatever shape the role entry takes (map or single-entry list).
+pub fn keyring_pack_anchor(doc: &Value) -> Option<String> {
+    let roles = doc.get("roles").unwrap_or(doc);
+    let pack = roles.get("pack")?;
+    let entry = match pack {
+        Value::Object(_) => Some(pack),
+        Value::Array(list) => list.first(),
+        _ => None,
+    }?;
+    ["public", "public_hex", "anchor"]
+        .iter()
+        .find_map(|key| entry.get(key).and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+/// The EN 18222 binding's identity field (the gateway's AD-3 parity).
+pub fn en18222_identity(doc: &Value) -> String {
+    field_print(doc, "uniqueProductIdentifier")
+}
+
+/// Every product identifier value of a rendered UNTP triad.
+pub fn untp_identifier_values(triad: &Value) -> Vec<String> {
+    triad
+        .get("passport")
+        .and_then(|p| p.get("productIdentifiers"))
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|id| id.get("value").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The first identifier value of a rendered UNTP triad ("" when absent).
+pub fn untp_first_identifier(triad: &Value) -> String {
+    untp_identifier_values(triad)
+        .first()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// What follows the last `)` (the `(01)<gtin>` GS1 spelling), or the
+/// value itself when it carries no parenthesis.
+pub fn after_last_paren(value: &str) -> &str {
+    match value.rsplit_once(')') {
+        Some((_, bare)) => bare,
+        None => value,
+    }
+}
+
 /// SHA-256 of a file's exact bytes, hex — the pack commitment.
 pub fn sha256_hex(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;

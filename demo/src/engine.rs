@@ -42,6 +42,10 @@ pub struct Tally {
 /// assertion target for the test harness.
 pub struct Out {
     transcript: File,
+    /// The hook's narration goes to stderr: its stdout carries return
+    /// values only (the mint verb's anchor), exactly as the sourced hook
+    /// kept its notes off the captured stdout.
+    to_stderr: bool,
 }
 
 impl Out {
@@ -51,7 +55,20 @@ impl Out {
             .create(true)
             .truncate(true)
             .open(transcript_path)?;
-        Ok(Out { transcript })
+        Ok(Out {
+            transcript,
+            to_stderr: false,
+        })
+    }
+
+    /// The hook's console: stderr (stdout stays reserved for return
+    /// values — see the field comment).
+    pub fn new_err(transcript_path: &Path) -> std::io::Result<Out> {
+        let out = Out::new(transcript_path)?;
+        Ok(Out {
+            to_stderr: true,
+            ..out
+        })
     }
 
     fn line(&mut self, text: &str) {
@@ -60,9 +77,15 @@ impl Out {
     }
 
     fn bytes(&mut self, bytes: &[u8]) {
-        let mut stdout = std::io::stdout();
-        let _ = stdout.write_all(bytes);
-        let _ = stdout.flush();
+        if self.to_stderr {
+            let mut stderr = std::io::stderr();
+            let _ = stderr.write_all(bytes);
+            let _ = stderr.flush();
+        } else {
+            let mut stdout = std::io::stdout();
+            let _ = stdout.write_all(bytes);
+            let _ = stdout.flush();
+        }
         let _ = self.transcript.write_all(bytes);
         let _ = self.transcript.flush();
     }
@@ -138,11 +161,48 @@ impl Out {
             "{GREEN}DEMO PASSED — B1-B4 subset (live smoke).{RESET}"
         ));
     }
+
+    // -- The quickstarts' narration (the scripts' printf lines) ------------
+
+    /// An adoption path's header: a bold `== ... ==` marker, then the
+    /// path's plain-text name.
+    pub fn path_header(&mut self, marker: &str, name: &str) {
+        self.line(&format!("{BOLD}{marker}{RESET}  {name}"));
+    }
+
+    /// The scripts' ok(): the label alone, no expected/actual suffix.
+    pub fn qs_ok(&mut self, label: &str) {
+        self.line(&format!("  {GREEN}[ok]{RESET}   {label}"));
+    }
+
+    /// The scripts' bad(): the label carries its own diagnosis.
+    pub fn qs_bad(&mut self, label: &str) {
+        self.line(&format!("  {RED}[FAIL]{RESET} {label}"));
+    }
+
+    /// The scripts' [SKIP] line (a missing binary; the run exits 77).
+    pub fn skip(&mut self, text: &str) {
+        self.line(&format!("  {YELLOW}[SKIP]{RESET} {text}"));
+    }
+
+    /// The scripts' closing summary line.
+    pub fn summary(&mut self, passed: u32, failed: u32) {
+        self.line(&format!("\n  summary: {passed} passed, {failed} failed"));
+    }
+
+    /// The live preset's per-service readiness line (demo-live's
+    /// wait_healthy print).
+    pub fn healthy(&mut self, name: &str, url: &str) {
+        self.line(&format!("    {GREEN}{name} healthy at {url}{RESET}"));
+    }
 }
 
 pub struct Config {
     pub work_dir: PathBuf,
     pub family_dir: PathBuf,
+    /// The unidpp-e2e checkout itself (the quickstarts' scratch dirs and
+    /// the live dir are its build/ subdirectories).
+    pub root: PathBuf,
     pub unidpp: PathBuf,
     pub registry_bin: PathBuf,
     pub registry_bind: String,
@@ -155,14 +215,22 @@ pub struct Config {
     pub quorum_ceremony_bin: PathBuf,
     pub device_drill_bin: PathBuf,
     pub quorum_bind: String,
+    pub issuer_bin: PathBuf,
+    pub issuer_bind: String,
     pub issuer_url: Option<String>,
     pub issuer_admin_token: Option<String>,
+    pub hub_bin: PathBuf,
+    pub trust_bind: String,
     pub trust_url: Option<String>,
+    pub log_bin: PathBuf,
+    pub log_bind: String,
     pub log_url: Option<String>,
+    pub live_dir: PathBuf,
     pub stop_after_b4: bool,
 }
 
-fn env_or(key: &str, default: &str) -> String {
+/// `${VAR:-default}` — the subcommands' own overrides use it too.
+pub fn env_or(key: &str, default: &str) -> String {
     std::env::var(key)
         .ok()
         .filter(|v| !v.is_empty())
@@ -187,6 +255,7 @@ impl Config {
                 &root.join("build/e2e").display().to_string(),
             )),
             family_dir: family.clone(),
+            root: root.clone(),
             unidpp: family_bin(&family, "UNIDPP_BIN", "unidpp-cli", "unidpp"),
             registry_bin: family_bin(
                 &family,
@@ -224,10 +293,25 @@ impl Config {
                 "device-drill",
             ),
             quorum_bind: env_or("UNIDPP_QUORUM_BIND", "127.0.0.1:8097"),
+            issuer_bin: family_bin(
+                &family,
+                "UNIDPP_ISSUER_BIN",
+                "unidpp-issuer",
+                "unidpp-issuer",
+            ),
+            issuer_bind: env_or("UNIDPP_ISSUER_BIND", "127.0.0.1:8096"),
             issuer_url: env_opt("UNIDPP_ISSUER_URL"),
             issuer_admin_token: env_opt("UNIDPP_ISSUER_ADMIN_TOKEN"),
+            hub_bin: family_bin(&family, "UNIDPP_HUB_BIN", "unidpp-hub", "unidpp-hub"),
+            trust_bind: env_or("UNIDPP_TRUST_BIND", "127.0.0.1:8092"),
             trust_url: env_opt("UNIDPP_TRUST_URL"),
+            log_bin: family_bin(&family, "UNIDPP_LOG_BIN", "unidpp-log", "unidpp-log"),
+            log_bind: env_or("UNIDPP_LOG_BIND", "127.0.0.1:8194"),
             log_url: env_opt("UNIDPP_LOG_URL"),
+            live_dir: PathBuf::from(env_or(
+                "UNIDPP_E2E_LIVE_DIR",
+                &root.join("build/live").display().to_string(),
+            )),
             stop_after_b4: env_opt("UNIDPP_E2E_STOP_AFTER").as_deref() == Some("B4"),
         }
     }
@@ -277,6 +361,12 @@ pub struct Story {
     pub resolver: Option<Child>,
     pub gateway: Option<Child>,
     pub quorum: Option<Child>,
+    /// The live preset's and the quickstarts' services (the demo story
+    /// itself leaves them unset).
+    pub issuer: Option<Child>,
+    pub trust: Option<Child>,
+    pub log: Option<Child>,
+    pub hub: Option<Child>,
     pub quorum_url_override: Option<String>,
     pub trust_anchor: Option<String>,
     pub trust_key_id: String,
@@ -295,6 +385,10 @@ impl Story {
             resolver: None,
             gateway: None,
             quorum: None,
+            issuer: None,
+            trust: None,
+            log: None,
+            hub: None,
             quorum_url_override: None,
             trust_anchor: None,
             trust_key_id: String::new(),
@@ -330,6 +424,20 @@ impl Story {
     pub fn abort(&mut self, message: String) -> Abort {
         self.out.aborted(&message);
         Abort
+    }
+
+    /// The quickstarts' check pair: the scripts' ok()/bad() — the label
+    /// alone carries the diagnosis, and the tally decides the exit.
+    pub fn pass_check(&mut self, label: &str) {
+        self.tally.total += 1;
+        self.tally.ok += 1;
+        self.out.qs_ok(label);
+    }
+
+    pub fn fail_check(&mut self, label: &str) {
+        self.tally.total += 1;
+        self.tally.failed += 1;
+        self.out.qs_bad(label);
     }
 
     /// Print the abort banner, stop the services, and report exit 1.
@@ -452,13 +560,43 @@ impl Story {
             .ok()
     }
 
+    /// Spawn with both streams landing in a log file (the quickstarts
+    /// redirect each service to its own $WORK/*.log; `append` re-opens
+    /// for append — the hub restart's `>>`).
+    pub fn spawn_service_logged(
+        &mut self,
+        bin: &Path,
+        envs: &[(&str, &str)],
+        log: &Path,
+        append: bool,
+    ) -> Option<Child> {
+        let file = if append {
+            OpenOptions::new().create(true).append(true).open(log)
+        } else {
+            File::create(log)
+        }
+        .ok()?;
+        Command::new(bin)
+            .envs(envs.iter().copied())
+            .stdout(Stdio::from(file.try_clone().ok()?))
+            .stderr(Stdio::from(file))
+            .spawn()
+            .ok()
+    }
+
     /// The script's readiness window: 250 polls, 0.2 s apart.
     pub fn wait_healthy(&self, host: &str, port: u16) -> bool {
-        for _ in 0..250 {
+        self.wait_healthy_window(host, port, 250, 200)
+    }
+
+    /// A readiness window at the caller's cadence (the quickstart
+    /// scripts poll 50 times, 0.2 s apart; demo-live 500 times, 0.1 s).
+    pub fn wait_healthy_window(&self, host: &str, port: u16, polls: usize, every_ms: u64) -> bool {
+        for _ in 0..polls {
             if self.wait_healthy_probe(host, port) {
                 return true;
             }
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(every_ms));
         }
         false
     }
@@ -483,12 +621,20 @@ impl Story {
         *child = None;
     }
 
-    /// The EXIT trap's order: gateway, resolver, registry, quorum.
+    /// The EXIT trap's order: gateway, resolver, registry, quorum — then
+    /// the live preset's and the quickstarts' services (issuer, trust,
+    /// log, hub). The shell scripts kill all their PIDs and then wait
+    /// for all of them; stop-by-PID in sequence has the same effect
+    /// (SIGTERM, then reap), no service depending on another's shutdown.
     pub fn cleanup(&mut self) {
         Self::stop_process(&mut self.gateway);
         Self::stop_process(&mut self.resolver);
         Self::stop_process(&mut self.registry);
         Self::stop_process(&mut self.quorum);
+        Self::stop_process(&mut self.issuer);
+        Self::stop_process(&mut self.trust);
+        Self::stop_process(&mut self.log);
+        Self::stop_process(&mut self.hub);
     }
 }
 
@@ -526,6 +672,45 @@ pub fn grep_verdict_ci(text: &str, needle: &str) -> String {
 
 pub fn tail_line(text: &str) -> String {
     text.lines().last().unwrap_or("").to_string()
+}
+
+/// The first n lines of a file (the scripts' `sed -n '1,8p'` diagnostic).
+pub fn head_lines(path: &Path, n: usize) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .take(n)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The last n lines of a file (the scripts' `tail -5` diagnostic).
+pub fn tail_lines(path: &Path, n: usize) -> Vec<String> {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(n);
+    lines[start..].iter().map(|l| (*l).to_string()).collect()
+}
+
+/// The scripts' `grep -oE '[0-9a-f]{130}' | head -1`: the first run of
+/// at least `len` lowercase hex characters, cut at `len` (the pack
+/// mint's derived anchor on stderr).
+pub fn first_hex_run(text: &str, len: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    let is_hex = |b: u8| matches!(b, b'0'..=b'9' | b'a'..=b'f');
+    let mut run = 0;
+    for (i, b) in bytes.iter().enumerate() {
+        if is_hex(*b) {
+            run += 1;
+            if run == len {
+                let start = i + 1 - len;
+                return Some(text[start..start + len].to_string());
+            }
+        } else {
+            run = 0;
+        }
+    }
+    None
 }
 
 /// `date -u +%Y-%m-%dT%H:%M:%SZ` without a time crate: civil-from-days

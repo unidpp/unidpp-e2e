@@ -100,6 +100,13 @@ unippp workspace layout.
 make demo
 cargo run --release --bin unidpp-demo   # from demo/ — the same story as a Rust binary
 
+# The same binary carries the rest of the shell surface as subcommands
+# (from demo/): the LIVE preset, the four quickstart adoption paths,
+# and the issuer hook.
+cargo run --release --bin unidpp-demo -- demo live                 # demo-live.sh as a preset
+cargo run --release --bin unidpp-demo -- quickstart verify-only    # also: publish-only | gateway | hub
+cargo run --release --bin unidpp-demo -- hook start | stop | create | event | pack
+
 # Run the demo against ALL FOUR live sibling services.
 make demo-live
 

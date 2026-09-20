@@ -1,12 +1,17 @@
-//! The demonstration entry point: the preamble (environment, services,
-//! topology), the ordered beat table, and the final tally. The story
-//! itself lives in beats.rs; the engine in engine.rs.
+//! The demonstration entry point: the command dispatch (the story, its
+//! LIVE preset, the quickstarts, the issuer hook), the preamble
+//! (environment, services, topology), the ordered beat table, and the
+//! final tally. The story itself lives in beats.rs; the engine in
+//! engine.rs.
 
 mod beats;
 mod engine;
+mod hook;
 mod http;
 mod json;
+mod live;
 mod payloads;
+mod quickstart;
 mod story;
 
 use engine::{now_iso, which, Flow, Out, Story};
@@ -17,7 +22,38 @@ fn main() {
 }
 
 fn run() -> i32 {
-    let cfg = engine::Config::from_env();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        // The default command is the story (demo.sh); `demo live` is its
+        // LIVE preset (demo-live.sh).
+        None => story_run(false),
+        Some("demo") => match args.get(1).map(String::as_str) {
+            None => story_run(false),
+            Some("live") => story_run(true),
+            Some(other) => {
+                eprintln!("unidpp-demo: unknown demo mode '{other}' (modes: live)");
+                2
+            }
+        },
+        Some("quickstart") => quickstart::run(args.get(1).map(String::as_str)),
+        Some("hook") => hook::run(&args[1..]),
+        Some(other) => {
+            eprintln!(
+                "unidpp-demo: unknown command '{other}' (commands: demo [live], quickstart <scenario>, hook <verb>)"
+            );
+            2
+        }
+    }
+}
+
+fn story_run(live: bool) -> i32 {
+    let mut cfg = engine::Config::from_env();
+    if live {
+        if let Err(message) = live::prepare(&mut cfg) {
+            eprintln!("unidpp-demo: {message}");
+            return 1;
+        }
+    }
     if let Err(e) = fs::create_dir_all(&cfg.work_dir) {
         eprintln!("cannot create work dir {}: {e}", cfg.work_dir.display());
         return 1;
@@ -44,6 +80,15 @@ fn run() -> i32 {
     }
     if which("python3").is_none() {
         return story.abort_exit("python3 is required".to_string());
+    }
+
+    // The LIVE preset starts all four sibling services for real, before
+    // the story's preamble names the topology they imply.
+    if live {
+        if live::start_services(&mut story).is_err() {
+            return story.abort_exit_quiet();
+        }
+        live::banner(&mut story);
     }
 
     story

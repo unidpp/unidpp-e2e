@@ -45,12 +45,12 @@ impl Story {
         }
     }
 
-    fn http_get(&self, base: &str, path: &str) -> Option<http::HttpReply> {
+    pub fn http_get(&self, base: &str, path: &str) -> Option<http::HttpReply> {
         let (host, port) = Config::split_url(base);
         http::get(&host, port, path, HTTP_TIMEOUT)
     }
 
-    fn http_post(&self, base: &str, path: &str, body: &str) -> Option<http::HttpReply> {
+    pub fn http_post(&self, base: &str, path: &str, body: &str) -> Option<http::HttpReply> {
         let (host, port) = Config::split_url(base);
         http::post(&host, port, path, body, HTTP_TIMEOUT)
     }
@@ -317,10 +317,15 @@ impl Story {
             ));
         }
         let bind = self.cfg.gateway_bind.clone();
-        self.gateway = self.spawn_service(
-            &self.cfg.gateway_bin.clone(),
-            &[("UNIDPP_GATEWAY_BIND", &bind)],
-        );
+        // The shell script let the gateway inherit the exported
+        // UNIDPP_ISSUER_URL (demo-live exports it); the live preset
+        // carries that URL in the config, so it is passed explicitly.
+        let issuer_url = self.cfg.issuer_url.clone();
+        let mut envs: Vec<(&str, &str)> = vec![("UNIDPP_GATEWAY_BIND", bind.as_str())];
+        if let Some(issuer) = issuer_url.as_deref() {
+            envs.push(("UNIDPP_ISSUER_URL", issuer));
+        }
+        self.gateway = self.spawn_service(&self.cfg.gateway_bin.clone(), &envs);
         if !self.wait_healthy(&host, port) {
             return Err(self.abort(format!(
                 "unidpp-gateway did not become healthy on {}",
@@ -664,8 +669,15 @@ impl Story {
             let _ = fs::write(&temp, &reply.body);
             let pack_doc: Value = serde_json::from_str(&reply.body)
                 .map_err(|e| self.abort(format!("invalid pack reply: {e}")))?;
-            let pack = pack_doc.get("pack").cloned().unwrap_or(Value::Null);
-            let _ = fs::write(out, json::py_dumps(&pack));
+            // jq_pack semantics: a string pack lands bare (the officer's
+            // terminal reads hex, not a JSON document); anything else
+            // stays a dumps'd container.
+            let encoded = match pack_doc.get("pack") {
+                Some(Value::String(s)) => s.clone(),
+                Some(other) => json::py_dumps(other),
+                None => String::new(),
+            };
+            let _ = fs::write(out, encoded);
             let anchor = json::field_print(&pack_doc, "anchor");
             let _ = fs::remove_file(&temp);
             Ok(anchor)
