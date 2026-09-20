@@ -1,6 +1,7 @@
 //! The family harness entry point: the ordered leg table (the shell
 //! harness's twelve tests, in its order), the per-leg `== test N ==`
 //! headers, and the closing summary whose counts the ledger compares.
+#![allow(clippy::zombie_processes)] // the bench projector and quickstart services are stopped on every path
 
 mod engine;
 mod http;
