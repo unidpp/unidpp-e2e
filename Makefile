@@ -4,16 +4,19 @@ HELP_WIDTH = 18
 help:                       ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[1m%-$(HELP_WIDTH)s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-demo: deps deps-trust        ## Walk the ten STORY.md beats end to end.
-	./scripts/demo.sh
+demo: deps deps-trust deps-resolver ## Walk the ten STORY.md beats end to end.
+	cargo run --release --manifest-path demo/Cargo.toml --bin unidpp-demo
 
 demo-live: deps-live        ## Walk B1-B10 against the four LIVE sibling services.
-	./scripts/demo-live.sh
+	cargo run --release --manifest-path demo/Cargo.toml --bin unidpp-demo -- demo live
 
-test:                       ## Run the shell test harness (happy path + tamper tests).
-	./tests/run_tests.sh
+test:                       ## Run the family harness (the twelve legs, 76 checks).
+	cargo run --release --manifest-path harness/Cargo.toml --bin unidpp-harness
 
-deps: deps-cli deps-registry deps-gateway deps-signatif ## Build every dependent binary (release).
+deps-resolver:              ## Build the resolver (its release binary goes stale silently otherwise).
+	cd ../unidpp-resolver && cargo build --release
+
+deps: deps-cli deps-registry deps-resolver deps-gateway deps-signatif ## Build every dependent binary (release).
 
 deps-live: deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway deps-signatif ## Build every live-service binary (release).
 

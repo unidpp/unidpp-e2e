@@ -1,0 +1,18 @@
+[package]
+name = "unidpp-harness"
+description = "The family test harness: the twelve legs of tests/run_tests.sh as a leg table of functions, driving the unidpp-demo binary, the unidpp CLI, the sibling services, and the NF-1 bench"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/unidpp/unidpp-e2e"
+rust-version = "1.75"
+
+# Dependency-light on purpose (the family doctrine, as the demo crate):
+# no tokio, no HTTP crate, no regex crate — the loopback client in
+# src/http.rs is the family pattern, serde_json reads the applicability
+# and receipt artifacts, sha2 recomputes the live log receipt's
+# commitment, and the grep -E vocabulary the assertions use is a small
+# hand-rolled matcher (src/pattern.rs).
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
