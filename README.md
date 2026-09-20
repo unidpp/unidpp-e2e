@@ -149,13 +149,13 @@ make demo UNIDPP_REGISTRY_URL=http://localhost:8098 \
 
 ## Live topology — `make demo-live`
 
-`scripts/demo-live.sh` starts **all four sibling services** on distinct
+`unidpp-demo demo live` starts **all four sibling services** on distinct
 loopback ports, each with its JSONL journal under `build/live/`, waits
-for every `/healthz`, then hands the whole B1–B10 story to `demo.sh`
+for every `/healthz`, then runs the whole B1–B10 story against the live URLs
 with the live URLs exported:
 
 ```
-                 make demo-live  (scripts/demo-live.sh)
+                 make demo-live  (unidpp-demo demo live)
                                 |
         +--------------+---------+----------+--------------+
         |              |         |          |              |
@@ -226,7 +226,7 @@ seeded fixtures and narrates that honestly.
 | `unidpp-gateway` | `../unidpp-gateway` | Wired (B-INT, both modes). `GET /untp/product/{id}` renders the UNTP VC triad; `POST /untp/ingest` imports it back — deterministic identity, conformity → profile bindings, idempotent per subject. |
 | `unidpp-resolver`, `unidpp-py`, … | sibling repos | not in scope for the demo. |
 
-The `scripts/issuer-hook.sh` file is the **single, clearly-marked issuer
+The `unidpp-demo hook` file is the **single, clearly-marked issuer
 integration point**: every issuance step in the demo goes through its
 three verbs (`issuer_create`, `issuer_event`, `issuer_mint_pack`). The
 CLI driver is the default; switch modes by setting `UNIDPP_ISSUER_URL=…`
