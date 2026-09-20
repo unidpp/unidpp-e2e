@@ -98,6 +98,7 @@ unippp workspace layout.
 ```sh
 # Run the demo end to end (CLI driver + local registry).
 make demo
+cargo run --release --bin unidpp-demo   # from demo/ — the same story as a Rust binary
 
 # Run the demo against ALL FOUR live sibling services.
 make demo-live

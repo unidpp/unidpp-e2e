@@ -1,0 +1,17 @@
+[package]
+name = "unidpp-demo"
+description = "The Momiji Mobility E8 end-to-end demonstration: the STORY.md beats driven against the real services, signed packs, and artifacts"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/unidpp/unidpp-e2e"
+rust-version = "1.75"
+
+# Dependency-light on purpose (the family doctrine): no tokio and no HTTP
+# crate — every service the story touches is loopback-only, so the
+# hand-rolled client in src/http.rs (the family pattern) carries all
+# requests on plain std threads; serde_json does the document assertions
+# and sha2 hashes the pack commitments the transparency-log mode anchors.
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
