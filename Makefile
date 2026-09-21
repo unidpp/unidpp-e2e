@@ -1,4 +1,4 @@
-.PHONY: help demo demo-live test clean deps deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway deps-signatif deps-live up down status
+.PHONY: help demo demo-live test clean deps deps-cli deps-registry deps-resolver deps-issuer deps-trust deps-log deps-gateway deps-signatif deps-archive deps-hub deps-projector deps-console deps-live up down status
 
 HELP_WIDTH = 18
 help:                       ## Show this help.
@@ -18,7 +18,22 @@ deps-resolver:              ## Build the resolver (its release binary goes stale
 
 deps: deps-cli deps-registry deps-resolver deps-gateway deps-signatif ## Build every dependent binary (release).
 
-deps-live: deps-cli deps-registry deps-issuer deps-trust deps-log deps-gateway deps-signatif ## Build every live-service binary (release).
+deps-live: deps-cli deps-registry deps-resolver deps-issuer deps-trust deps-log deps-gateway deps-signatif deps-archive deps-hub deps-projector deps-console ## Build every live-service binary (release).
+
+# The services the pilot runs that no test ever needed whole: the
+# stale-binary lesson (248) — a release binary nobody rebuilds is a
+# deployment drift waiting to serve yesterday's contract.
+deps-archive:               ## Build unidpp-archive (release).
+	cd ../unidpp-archive && cargo build --release
+
+deps-hub:                   ## Build unidpp-hub (release).
+	cd ../unidpp-hub && cargo build --release
+
+deps-projector:             ## Build unidpp-projector (release).
+	cd ../unidpp-projector && cargo build --release
+
+deps-console:               ## Build unidpp-console (release).
+	cd ../unidpp-console && cargo build --release
 
 # The sibling repos are developed in parallel; a rebuild can fail while
 # a sibling is mid-edit. When that happens we fall back to the existing

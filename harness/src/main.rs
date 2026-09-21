@@ -85,6 +85,11 @@ const LEGS: &[Leg] = &[
         label: "hub attachment: the stateless signed relay (SI-3)",
         run: legs::hub,
     },
+    Leg {
+        number: 13,
+        label: "the family contracts: the cross-repo drift checks together",
+        run: legs::family_contracts,
+    },
 ];
 
 fn main() {

@@ -11,7 +11,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// The STORY beats the happy path demands by full label (the shell's
 /// for-loop list, verbatim — the em-dashes are load-bearing).
@@ -1014,4 +1014,131 @@ pub fn ensure_demo_binary(h: &Harness) -> bool {
     let manifest = h.root.join("demo/Cargo.toml").display().to_string();
     let _ = h.run_null(&["cargo", "build", "--release", "--manifest-path", &manifest]);
     engine::is_executable(&h.demo_bin)
+}
+
+// ---------------------------------------------------------------------------
+// Test 13: the family contracts — the five cross-repo drift checks
+// that only bite when run in-family, run together (TODO 250). Each
+// skips loudly when its subject checkout is absent; green credits
+// one check per subject found; drift fails the family CI.
+// ---------------------------------------------------------------------------
+
+pub fn family_contracts(h: &mut Harness) {
+    let mut credits = 0u32;
+
+    // 1. The environment contract (unidpp-config): render names ==
+    //    every service's x-unidpp-env-keys. Its in-repo test skips
+    //    without sibling checkouts; here the siblings are present.
+    let config = h.family.join("unidpp-config");
+    if config.is_dir() {
+        let code = h.run_null(&[
+            "cargo",
+            "test",
+            "--manifest-path",
+            &format!("{}/Cargo.toml", config.display()),
+            "the_services_env_keys_match_the_rendered_contract",
+        ]);
+        match code {
+            Some(0) => {
+                h.say("  [ok]   the env contract holds (config render == every service's x-unidpp-env-keys)");
+                credits += 1;
+            }
+            _ => h.fail_line(
+                "the env contract drifted (unidpp-config render vs the services' contracts)",
+            ),
+        }
+    } else {
+        h.say("  [SKIP] env contract: no unidpp-config checkout");
+    }
+
+    // 2. The docs API reference: every page matches its service's
+    //    committed golden.
+    let docs = h.family.join("unidpp-docs");
+    if docs.is_dir() {
+        let code = Command::new("node")
+            .arg("tools/check-api-reference.mjs")
+            .current_dir(&docs)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if code {
+            h.say("  [ok]   the docs API reference matches the committed goldens");
+            credits += 1;
+        } else {
+            h.fail_line("a docs API page drifted from its contract (npm run gen:api)");
+        }
+    } else {
+        h.say("  [SKIP] docs reference: no unidpp-docs checkout");
+    }
+
+    // 3. The website's grounded facts: regenerating them changes
+    //    nothing (modulo the generation date).
+    let site = h.family.join("unidpp.github.io");
+    if site.is_dir() {
+        let out = Command::new("node")
+            .arg("scripts/gen-facts.mjs")
+            .current_dir(&site)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if out {
+            h.say("  [ok]   the website's facts regenerate cleanly");
+            credits += 1;
+        } else {
+            h.fail_line("the website's facts could not regenerate (scripts/gen-facts.mjs)");
+        }
+    } else {
+        h.say("  [SKIP] website facts: no unidpp.github.io checkout");
+    }
+
+    // 4. The vendored vector corpora: byte-identical to the originals.
+    if Path::new(&h.family.join("unidpp-ts/test-vectors")).is_dir() {
+        let code = Command::new("node")
+            .arg("scripts/vectors-cross-check.mjs")
+            .current_dir(&h.root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if code {
+            h.say("  [ok]   the TS/RB vector corpora are byte-identical to the originals");
+            credits += 1;
+        } else {
+            h.fail_line("a vendored vector corpus drifted from its original");
+        }
+    } else {
+        h.say("  [SKIP] vector corpora: no vendored corpus");
+    }
+
+    // 5. The papers: every rendered PDF was built against the
+    //    current specification head.
+    let papers = h.family.join("unidpp-papers");
+    if papers.is_dir() {
+        let code = Command::new("python3")
+            .arg("build-papers-pdf.py")
+            .arg("--check-fresh")
+            .current_dir(&papers)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if code {
+            h.say("  [ok]   the papers are rendered against the current spec head");
+            credits += 1;
+        } else {
+            h.fail_line("a paper predates the current specification head (--check-fresh)");
+        }
+    } else {
+        h.say("  [SKIP] papers freshness: no unidpp-papers checkout");
+    }
+
+    if credits > 0 {
+        h.credit(credits);
+    }
 }
