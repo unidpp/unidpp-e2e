@@ -1210,17 +1210,23 @@ pub fn family_contracts(h: &mut Harness) {
                 continue;
             }
             checked += 1;
-            let clean = Command::new("cargo")
+            let out = Command::new("cargo")
                 .arg("fmt")
                 .arg("--check")
                 .current_dir(&dir)
-                .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
+                .output();
+            let clean = matches!(&out, Ok(o) if o.status.success());
             if !clean {
                 drifted.push(repo);
+                // The first diff line names the file and spot — the
+                // drifted repo's own CI has the rest.
+                if let Ok(o) = out {
+                    let text = String::from_utf8_lossy(&o.stdout).into_owned();
+                    if let Some(line) = text.lines().find(|l| l.starts_with("Diff in")) {
+                        h.say(&format!("    {line}"));
+                    }
+                }
             }
         }
         if drifted.is_empty() {
