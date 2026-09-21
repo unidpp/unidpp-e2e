@@ -1182,6 +1182,60 @@ pub fn family_contracts(h: &mut Harness) {
         }
     }
 
+    // 7. rustfmt across every Rust repository of the family: the
+    //    repos' own `fmt --check` gates only bite their next push;
+    //    here the drift is named in the family CI, repo by repo.
+    {
+        let repos = [
+            "unidpp-cli",
+            "unidpp-registry",
+            "unidpp-resolver",
+            "unidpp-trust",
+            "unidpp-log",
+            "unidpp-issuer",
+            "unidpp-projector",
+            "unidpp-gateway",
+            "unidpp-archive",
+            "unidpp-hub",
+            "unidpp-console",
+            "unidpp-config",
+            "unidpp-core",
+            "unidpp-signatif",
+        ];
+        let mut drifted: Vec<&str> = Vec::new();
+        let mut checked = 0usize;
+        for repo in repos {
+            let dir = h.family.join(repo);
+            if !dir.is_dir() {
+                continue;
+            }
+            checked += 1;
+            let clean = Command::new("cargo")
+                .arg("fmt")
+                .arg("--check")
+                .current_dir(&dir)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !clean {
+                drifted.push(repo);
+            }
+        }
+        if drifted.is_empty() {
+            h.say(&format!(
+                "  [ok]   rustfmt clean across {checked} repositories"
+            ));
+            credits += 1;
+        } else {
+            h.fail_line(&format!(
+                "rustfmt drift in: {} (cargo fmt and commit)",
+                drifted.join(", ")
+            ));
+        }
+    }
+
     if credits > 0 {
         h.credit(credits);
     }
