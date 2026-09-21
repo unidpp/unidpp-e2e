@@ -56,10 +56,65 @@ jobs:
         with:
           repository: unidpp/unidpp-hub
           path: unidpp-hub
+      # The resolver (make deps builds it; the demo's G-CORR beats
+      # need its current binary) and the drift leg's subjects: the
+      # checks in harness test 13 skip loudly without their checkouts,
+      # and the env contract needs every service's openapi.yaml.
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-resolver
+          path: unidpp-resolver
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-config
+          path: unidpp-config
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-projector
+          path: unidpp-projector
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-archive
+          path: unidpp-archive
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-console
+          path: unidpp-console
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-docs
+          path: unidpp-docs
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp.github.io
+          path: unidpp.github.io
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-ts
+          path: unidpp-ts
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-rb
+          path: unidpp-rb
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-spec
+          path: unidpp-spec
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-papers
+          path: unidpp-papers
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build the demo's dependencies
-        run: make deps
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the docs' and the site's Node dependencies
+        run: |
+          (cd unidpp-docs && npm ci)
+          (cd unidpp.github.io && npm ci)
+      - name: Build the family's dependencies (every service binary — no test skips for a missing binary)
+        run: make deps-live
       - name: Run the story (B1-B10, B-CTO, B-INT)
         run: make demo
-      - name: Shell test harness
+      - name: The family harness (the twelve legs + the drift leg)
         run: make test
