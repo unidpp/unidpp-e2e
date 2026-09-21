@@ -110,8 +110,8 @@ jobs:
           node-version: 22
       - name: Install the docs' and the site's Node dependencies
         run: |
-          (cd unidpp-docs && npm ci)
-          (cd unidpp.github.io && npm ci)
+          (cd ../unidpp-docs && npm ci)
+          (cd ../unidpp.github.io && npm ci)
       - name: Build the family's dependencies (every service binary — no test skips for a missing binary)
         run: make deps-live
       - name: Run the story (B1-B10, B-CTO, B-INT)
