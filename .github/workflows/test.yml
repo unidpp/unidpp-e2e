@@ -104,7 +104,9 @@ jobs:
         with:
           repository: unidpp/unidpp-papers
           path: unidpp-papers
-      - uses: dtolnay/rust-toolchain@stable
+      # No toolchain step: rustup resolves rust-toolchain.toml at
+      # every cargo invocation, so CI installs and formats with the
+      # exact pinned generation (the file is the single source).
       - uses: actions/setup-node@v4
         with:
           node-version: 22
