@@ -1080,16 +1080,24 @@ pub fn family_contracts(h: &mut Harness) {
         let out = Command::new("node")
             .arg("scripts/gen-facts.mjs")
             .current_dir(&site)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if out {
-            h.say("  [ok]   the website's facts regenerate cleanly");
-            credits += 1;
-        } else {
-            h.fail_line("the website's facts could not regenerate (scripts/gen-facts.mjs)");
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                h.say("  [ok]   the website's facts regenerate cleanly");
+                credits += 1;
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                h.fail_line(&format!(
+                    "the website's facts could not regenerate: {}{}",
+                    stdout.trim(),
+                    stderr.trim()
+                ));
+            }
+            Err(e) => {
+                h.fail_line(&format!("the facts generator could not run: {e}"));
+            }
         }
     } else {
         h.say("  [SKIP] website facts: no unidpp.github.io checkout");
