@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # nightly at 03:17 UTC — the pilot's nightly-backup minute; the
+    # drift leg (and now the public truth surfaces) catch ambient rot
+    # without a push to trigger them
+    - cron: "17 3 * * *"
 
 jobs:
   demo:

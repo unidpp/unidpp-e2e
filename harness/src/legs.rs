@@ -1242,6 +1242,62 @@ pub fn family_contracts(h: &mut Harness) {
         }
     }
 
+    // 8. the public truth surfaces: every hostname serves the contract
+    //    its service pins, past the loopback (the 126 doctrine, public
+    //    edition). The check curls — the harness speaks plain http, and
+    //    the public surfaces are https-only by construction. Offline is
+    //    a loud skip; an HTTP error or a foreign title is a failure.
+    {
+        let publics = [
+            ("registry.unidpp.org", "UniDPP registry"),
+            ("registry-jp.unidpp.org", "UniDPP registry"),
+            ("console.unidpp.org", "UniDPP console"),
+            ("trust.unidpp.org", "UniDPP trust"),
+            ("log.unidpp.org", "UniDPP log"),
+        ];
+        let mut wrong: Vec<String> = Vec::new();
+        let mut offline = false;
+        for (host, title) in publics {
+            let out = Command::new("curl")
+                .args(["-sf", "-m", "20", &format!("https://{host}/openapi.yaml")])
+                .stderr(Stdio::null())
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    let body = String::from_utf8_lossy(&o.stdout).into_owned();
+                    if !body.contains(&format!("title: {title}")) {
+                        wrong.push(format!("{host} (contract does not name `{title}`)"));
+                    }
+                }
+                Ok(o) => {
+                    // curl -f turns HTTP errors into exit 22; connection
+                    // failures are exit 6/7/28 — only those mean offline.
+                    let code = o.status.code().unwrap_or(0);
+                    if matches!(code, 6 | 7 | 28) {
+                        offline = true;
+                    } else {
+                        wrong.push(format!("{host} (HTTP path failed, curl exit {code})"));
+                    }
+                }
+                Err(_) => wrong.push(format!("{host} (curl could not run)")),
+            }
+        }
+        if offline && wrong.is_empty() {
+            h.say("  [SKIP] public truth surfaces: the network is unreachable from here");
+        } else if wrong.is_empty() {
+            h.say(&format!(
+                "  [ok]   public truth surfaces: {} hostnames serve their pinned contracts",
+                publics.len()
+            ));
+            credits += 1;
+        } else {
+            h.fail_line(&format!(
+                "public truth surfaces drifted: {} (the deployment or its tunnels need repair)",
+                wrong.join("; ")
+            ));
+        }
+    }
+
     if credits > 0 {
         h.credit(credits);
     }
