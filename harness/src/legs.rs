@@ -1242,18 +1242,21 @@ pub fn family_contracts(h: &mut Harness) {
         }
     }
 
-    // 8. the public truth surfaces: every hostname serves the contract
-    //    its service pins, past the loopback (the 126 doctrine, public
-    //    edition). The check curls — the harness speaks plain http, and
-    //    the public surfaces are https-only by construction. Offline is
-    //    a loud skip; an HTTP error or a foreign title is a failure.
+    // 8. the public truth surfaces: every deployment alias serves the
+    //    union contract, and the module contracts carry at their
+    //    prefixes (the REARCH one-deployment shape). The console keeps
+    //    its own process — and its own contract — until it folds in.
+    //    The check curls — the harness speaks plain http, and the
+    //    public surfaces are https-only by construction. Offline is a
+    //    loud skip; an HTTP error or a foreign title is a failure.
     {
+        let union_title = "UniDPP — the one deployment";
         let publics = [
-            ("registry.unidpp.org", "UniDPP registry"),
-            ("registry-jp.unidpp.org", "UniDPP registry"),
+            ("registry.unidpp.org", union_title),
+            ("registry-jp.unidpp.org", union_title),
+            ("trust.unidpp.org", union_title),
+            ("log.unidpp.org", union_title),
             ("console.unidpp.org", "UniDPP console"),
-            ("trust.unidpp.org", "UniDPP trust"),
-            ("log.unidpp.org", "UniDPP log"),
         ];
         let mut wrong: Vec<String> = Vec::new();
         let mut offline = false;
@@ -1282,11 +1285,39 @@ pub fn family_contracts(h: &mut Harness) {
                 Err(_) => wrong.push(format!("{host} (curl could not run)")),
             }
         }
+        // The prefix proof: a module contract reachable through a
+        // deployment alias, titled for its module.
+        match Command::new("curl")
+            .args([
+                "-sf",
+                "-m",
+                "20",
+                "https://registry.unidpp.org/trust/openapi.yaml",
+            ])
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let body = String::from_utf8_lossy(&o.stdout).into_owned();
+                if !body.contains("title: UniDPP trust") {
+                    wrong.push("registry.unidpp.org/trust (the module contract does not name the module)".into());
+                }
+            }
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(0);
+                if !matches!(code, 6 | 7 | 28) {
+                    wrong.push(format!(
+                        "registry.unidpp.org/trust (HTTP path failed, curl exit {code})"
+                    ));
+                }
+            }
+            Err(_) => wrong.push("registry.unidpp.org/trust (curl could not run)".into()),
+        }
         if offline && wrong.is_empty() {
             h.say("  [SKIP] public truth surfaces: the network is unreachable from here");
         } else if wrong.is_empty() {
             h.say(&format!(
-                "  [ok]   public truth surfaces: {} hostnames serve their pinned contracts",
+                "  [ok]   public truth surfaces: {} hostnames serve the one deployment's contract, modules at their prefixes",
                 publics.len()
             ));
             credits += 1;
