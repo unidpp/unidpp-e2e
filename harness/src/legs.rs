@@ -1256,7 +1256,7 @@ pub fn family_contracts(h: &mut Harness) {
             ("registry-jp.unidpp.org", union_title),
             ("trust.unidpp.org", union_title),
             ("log.unidpp.org", union_title),
-            ("console.unidpp.org", "UniDPP console"),
+            ("console.unidpp.org", union_title),
         ];
         let mut wrong: Vec<String> = Vec::new();
         let mut offline = false;
@@ -1300,7 +1300,10 @@ pub fn family_contracts(h: &mut Harness) {
             Ok(o) if o.status.success() => {
                 let body = String::from_utf8_lossy(&o.stdout).into_owned();
                 if !body.contains("title: UniDPP trust") {
-                    wrong.push("registry.unidpp.org/trust (the module contract does not name the module)".into());
+                    wrong.push(
+                        "registry.unidpp.org/trust (the module contract does not name the module)"
+                            .into(),
+                    );
                 }
             }
             Ok(o) => {
