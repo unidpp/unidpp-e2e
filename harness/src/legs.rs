@@ -1257,6 +1257,7 @@ pub fn family_contracts(h: &mut Harness) {
             ("trust.unidpp.org", union_title),
             ("log.unidpp.org", union_title),
             ("console.unidpp.org", union_title),
+            ("sandbox.unidpp.org", union_title),
         ];
         let mut wrong: Vec<String> = Vec::new();
         let mut offline = false;
