@@ -17,6 +17,7 @@ const SOURCES = [
   "unidpp-core/crates/s13/fixtures/canonical",
   "unidpp-core/crates/grid/fixtures/canonical",
   "unidpp-core/crates/semantics/fixtures/canonical",
+  "unidpp-core/crates/tier_a/fixtures/canonical",
   "unidpp-signatif/fixtures/canonical",
 ];
 const VENDORS = [
