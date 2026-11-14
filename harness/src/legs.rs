@@ -1334,6 +1334,121 @@ pub fn family_contracts(h: &mut Harness) {
         }
     }
 
+    // 9. the S13 seam answers on the public estate: the custodian
+    //    announces its keys, the composition law names the
+    //    bottleneck, and the route encoder reproduces the corpus
+    //    digest (the s13 verification-route fixture, canonical_hex
+    //    4ac3b495...). Offline is a loud skip; anything else is a
+    //    failure — the seam is part of the estate's public truth.
+    {
+        let mut wrong: Vec<String> = Vec::new();
+        let mut offline = false;
+        let compose_body = r#"{"vector":{"transport":"same","protocol":"same","structure":"gap","semantics":"same","identity":"same","trust":"same"},"policy_cap":4}"#;
+        let route_body = r#"{"steps":[{"step":"resolve","subject":"urn:unidpp:passport:pack-0001"},{"step":"transport","mode":"document","counterpart":"de-zoll"},{"step":"document","kind":"frozen-view","digest":[7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7]},{"step":"substitution","data_class":"cn-dynamic","service":"cn-attestation-service"},{"step":"classify","entry":{"class":"eu-static","element_set":"urn:unidpp:elements:battery-static","evidence":"verified-direct","governing_policy":"eu-static-open","governing_policy_version":1,"reading":"conformant","as_of":"2030-06-01T08:30:00Z"}},{"step":"classify","entry":{"class":"cn-dynamic","element_set":"urn:unidpp:elements:bms-dynamic","evidence":"attested-by-authority","governing_policy":"cn-dynamic-bms","governing_policy_version":1,"reading":"pass","as_of":"2030-06-01T08:00:00Z"}},{"step":"gap","data_class":"jp-safety","reason":"declaration refusal: no willingness for jp-safety"}]}"#;
+        const ROUTE_DIGEST: &str =
+            "4ac3b495cfea7a2bb04f15812a04f479fcbe65bd77d8807125a264a7a50a63c6";
+        for host in ["app.unidpp.org", "registry-jp.unidpp.org"] {
+            let get = |path: &str| {
+                Command::new("curl")
+                    .args(["-sf", "-m", "20", &format!("https://{host}{path}")])
+                    .stderr(Stdio::null())
+                    .output()
+            };
+            let post = |path: &str, body: &str| {
+                Command::new("curl")
+                    .args([
+                        "-sf",
+                        "-m",
+                        "20",
+                        "-X",
+                        "POST",
+                        "-H",
+                        "content-type: application/json",
+                        "-d",
+                        body,
+                        &format!("https://{host}{path}"),
+                    ])
+                    .stderr(Stdio::null())
+                    .output()
+            };
+            // The custodian announces its keys.
+            match get("/s13/custodian") {
+                Ok(o) if o.status.success() => {
+                    let body = String::from_utf8_lossy(&o.stdout).into_owned();
+                    if !body.contains("\"key_id\":\"k-") {
+                        wrong.push(format!("{host} (the custodian's keys are not announced)"));
+                    }
+                }
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(0);
+                    if matches!(code, 6 | 7 | 28) {
+                        offline = true;
+                    } else {
+                        wrong.push(format!(
+                            "{host} (the custodian GET failed, curl exit {code})"
+                        ));
+                    }
+                }
+                Err(_) => wrong.push(format!("{host} (curl could not run)")),
+            }
+            // The composition law names the bottleneck.
+            match post("/s13/compose", compose_body) {
+                Ok(o) if o.status.success() => {
+                    let body = String::from_utf8_lossy(&o.stdout).into_owned();
+                    if !(body.contains("\"level\":0")
+                        && body.contains("\"bottleneck\":\"structure\""))
+                    {
+                        wrong.push(format!(
+                            "{host} (the composition law answered outside its form)"
+                        ));
+                    }
+                }
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(0);
+                    if matches!(code, 6 | 7 | 28) {
+                        offline = true;
+                    } else {
+                        wrong.push(format!(
+                            "{host} (the compose POST failed, curl exit {code})"
+                        ));
+                    }
+                }
+                Err(_) => wrong.push(format!("{host} (curl could not run)")),
+            }
+            // The route encoder reproduces the corpus digest.
+            match post("/s13/route/encode", route_body) {
+                Ok(o) if o.status.success() => {
+                    let body = String::from_utf8_lossy(&o.stdout).into_owned();
+                    if !body.contains(ROUTE_DIGEST) {
+                        wrong.push(format!("{host} (the route digest drifted from the corpus)"));
+                    }
+                }
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(0);
+                    if matches!(code, 6 | 7 | 28) {
+                        offline = true;
+                    } else {
+                        wrong.push(format!(
+                            "{host} (the route encode POST failed, curl exit {code})"
+                        ));
+                    }
+                }
+                Err(_) => wrong.push(format!("{host} (curl could not run)")),
+            }
+        }
+        if offline && wrong.is_empty() {
+            h.say("  [SKIP] the S13 public surface: the network is unreachable from here");
+        } else if wrong.is_empty() {
+            h.say("  [ok]   the S13 public surface: the custodian, the composition law and the route digest answer on both hosts");
+            credits += 1;
+        } else {
+            h.fail_line(&format!(
+                "the S13 public surface drifted: {} (the estate's seam needs repair)",
+                wrong.join("; ")
+            ));
+        }
+    }
+
     if credits > 0 {
         h.credit(credits);
     }
