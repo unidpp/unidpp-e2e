@@ -16,13 +16,16 @@ test:                       ## Run the family harness (the twelve legs, 76 check
 deps-resolver:              ## Build the resolver (its release binary goes stale silently otherwise).
 	cd ../unidpp-resolver && cargo build --release
 
-deps: deps-cli deps-registry deps-resolver deps-gateway deps-signatif ## Build every dependent binary (release).
+deps: deps-cli deps-registry deps-resolver deps-gateway deps-signatif deps-server ## Build every dependent binary (release).
 
 deps-live: deps-cli deps-registry deps-resolver deps-issuer deps-trust deps-log deps-gateway deps-signatif deps-archive deps-hub deps-projector deps-console ## Build every live-service binary (release).
 
 # The services the pilot runs that no test ever needed whole: the
 # stale-binary lesson (248) — a release binary nobody rebuilds is a
 # deployment drift waiting to serve yesterday's contract.
+deps-server:                ## Build unidpp-server (release; the federation beat's custodian).
+	cd ../unidpp-server && cargo build --release
+
 deps-archive:               ## Build unidpp-archive (release).
 	cd ../unidpp-archive && cargo build --release
 

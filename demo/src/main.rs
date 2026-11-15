@@ -117,6 +117,9 @@ fn story_run(live: bool) -> i32 {
     if story.start_registry().is_err() {
         return story.abort_exit_quiet();
     }
+    if story.start_server().is_err() {
+        return story.abort_exit_quiet();
+    }
     if story.pin_trust_anchor().is_err() {
         return story.abort_exit_quiet();
     }
@@ -178,7 +181,9 @@ fn story_run(live: bool) -> i32 {
         }
     }
 
-    story.out.hr("STORY COMPLETE — B1 through B10");
+    story
+        .out
+        .hr("STORY COMPLETE — B1 through B10, then the border crossing");
     story.out.say(&format!(
         "checks:   {}/{} passed",
         story.tally.ok, story.tally.total

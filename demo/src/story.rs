@@ -34,6 +34,55 @@ impl Story {
         format!("http://{}", self.cfg.gateway_bind)
     }
 
+    /// The federation surface's base (the one-binary's /s13 rides the
+    /// server process; an external deployment overrides by env).
+    pub fn server_url(&self) -> String {
+        match &self.cfg.server_url_override {
+            Some(url) => url.clone(),
+            None => format!("http://{}", self.cfg.server_bind),
+        }
+    }
+
+    /// Start the one-binary estate (the federation beat's custodian).
+    /// A server_url override means an external deployment serves the
+    /// seam; nothing local is started.
+    pub fn start_server(&mut self) -> R<()> {
+        if self.cfg.server_url_override.is_some() {
+            self.out.note(&format!(
+                "using external server at {} (not starting one)",
+                self.server_url()
+            ));
+            return Ok(());
+        }
+        if !self.cfg.server_bin.is_file() {
+            return Err(self.abort(format!(
+                "server binary missing: {} (run: make deps-server)",
+                self.cfg.server_bin.display()
+            )));
+        }
+        self.out.note(&format!(
+            "starting unidpp-server on {}",
+            self.cfg.server_bind
+        ));
+        let bind = self.cfg.server_bind.clone();
+        self.server = self.spawn_service(
+            &self.cfg.server_bin.clone(),
+            &[("UNIDPP_SERVER_BIND", &bind)],
+        );
+        let (host, port) = Config::split_bind(&bind);
+        if !self.wait_healthy(&host, port) {
+            return Err(self.abort(format!(
+                "server did not become healthy on {}",
+                self.server_url()
+            )));
+        }
+        self.out.say(&format!(
+            "  server   : {} (the S13 seam answers)",
+            self.server_url()
+        ));
+        Ok(())
+    }
+
     pub fn resolver_url(&self) -> String {
         format!("http://{}", self.cfg.resolver_bind)
     }

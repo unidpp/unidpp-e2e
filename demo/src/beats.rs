@@ -9,6 +9,12 @@ use crate::payloads;
 use crate::story::CreateSpec;
 use serde_json::{json, Value};
 use std::fs;
+use unidpp_model::CanonicalWriter;
+use unidpp_s13::S13Request;
+use unidpp_signatif::keyring::KeyPair;
+use unidpp_signatif::s13::{NonRepudiableResponse, SignedS13Request, SignedS13Response};
+use unidpp_signatif::sign::{SigningDomain, Suite};
+use unidpp_signatif::PublicKey;
 
 // STORY cast (STORY.md section 0 — the identities of every beat).
 pub const BIKE_ID: &str = "local:momiji:e8/J-000842";
@@ -2353,6 +2359,251 @@ fn b10(story: &mut Story) -> R<Flow> {
 pub type BeatFn = fn(&mut Story) -> R<Flow>;
 
 /// The ordered story: adding a beat is adding a function here.
+/// ===========================================================================
+/// B-XB — The cross-border seam: the signed request, the policy's answer, the
+/// authority's counter-signature (XB-1/6/7; the estate's /s13 surface)
+/// ===========================================================================
+fn b_xb(story: &mut Story) -> R<Flow> {
+    story.out.beat(
+        "B-XB",
+        "A border crossing: the foreign verifier asks, the custodian's POLICY answers",
+    );
+    story.out.what("2030-06: de-zoll asks for the cn-dynamic segment of pack-0001 — no contents cross, the POLICY does (XB-1); denial would be stated, never silent.");
+
+    let base = story.server_url();
+    let hex = |bytes: &[u8]| -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() };
+
+    // The custodian announces its seeded keys.
+    let custodian_reply = story.http_get(&base, "/s13/custodian").ok_or_else(|| {
+        story.abort("the seam does not answer (the server carries the federation module)".into())
+    })?;
+    let custodian: Value = serde_json::from_str(&custodian_reply.body)
+        .map_err(|_| story.abort("the custodian's answer is not JSON".into()))?;
+    let custodian_public_hex = custodian
+        .get("public_hex")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| story.abort("the custodian's public key is missing".into()))?
+        .to_string();
+    let authority_public_hex = custodian
+        .get("authority_public_hex")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| story.abort("the authority's public key is missing".into()))?
+        .to_string();
+    story.out.say(&format!(
+        "the custodian {} answers under {} (same seed degrades as the estate's edge)",
+        custodian
+            .get("custodian")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
+        custodian
+            .get("key_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+    ));
+
+    // The foreign verifier derives its own key and registers the public half.
+    let verifier = KeyPair::seeded(Suite::Ed25519, b"story/de-zoll")
+        .map_err(|_| story.abort("the foreign keypair refuses to derive".into()))?;
+    let register = story.http_post(
+        &base,
+        "/s13/nodes",
+        &json!({
+            "node_id": "de-zoll",
+            "suite": "ed25519",
+            "public_hex": hex(verifier.public().as_bytes()),
+        })
+        .to_string(),
+    );
+    match register {
+        Some(reply) if reply.status == 201 => {
+            story
+                .out
+                .say("the foreign verifier registers under its own key");
+        }
+        Some(reply) if reply.status == 200 => {
+            story
+                .out
+                .say("the foreign verifier is already registered (a re-run)");
+        }
+        _ => return Err(story.abort("the node registration refused".into())),
+    }
+
+    // The governing policy registers; the segment pins to it.
+    let policy = json!({
+        "policy_id": "cn-dynamic-bms",
+        "version": 1,
+        "authority": "cn-samr",
+        "readers": ["cn-customs"],
+        "verifiers": ["cn-customs", "de-zoll"],
+        "writers": ["weilian-shenzhen"],
+        "reveal": "OriginSealed",
+        "suites": ["sm2"],
+        "valid_from": "2027-01-01T00:00:00Z",
+        "valid_to": null,
+        "superseded_by": null,
+    });
+    let policy_reply = story.http_post(&base, "/s13/policies", &policy.to_string());
+    if !matches!(&policy_reply, Some(r) if r.status == 201 || r.status == 200) {
+        return Err(story.abort("the policy registration refused".into()));
+    }
+    let pin = story.http_post(
+        &base,
+        "/s13/segments",
+        &json!({"segment": "cn-dynamic", "policy_id": "cn-dynamic-bms", "version": 1}).to_string(),
+    );
+    if !matches!(&pin, Some(r) if r.status == 201 || r.status == 200) {
+        return Err(story.abort("the segment pin refused".into()));
+    }
+    story
+        .out
+        .say("the segment cn-dynamic pins to the origin-sealed policy cn-dynamic-bms v1");
+
+    // The foreign verifier SIGNS its request in the S13-MESSAGE domain
+    // (Annex B.5: the tag, one zero byte, the canonical bytes).
+    let request = S13Request {
+        verifier: "de-zoll".into(),
+        subject: "urn:unidpp:passport:pack-0001".into(),
+        profile: "urn:unidpp:profile:eu-battery".into(),
+        segment: "cn-dynamic".into(),
+        at: "2030-06-01T08:00:00Z".into(),
+    };
+    let signed = SignedS13Request::issue(request, "de-zoll", &verifier)
+        .map_err(|_| story.abort("the request refuses to sign".into()))?;
+    let answered = story.http_post(
+        &base,
+        "/s13/requests",
+        &serde_json::to_string(&signed).expect("wire"),
+    );
+    let answered =
+        answered.ok_or_else(|| story.abort("the seam did not answer the signed request".into()))?;
+    if answered.status != 201 {
+        return Err(story.abort(format!(
+            "the signed request refused (HTTP {})",
+            answered.status
+        )));
+    }
+    let answered_doc: Value = serde_json::from_str(&answered.body)
+        .map_err(|_| story.abort("the answer is not JSON".into()))?;
+    let outcome = answered_doc
+        .pointer("/signed_response/response/outcome/outcome")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| story.abort("the answer carries no outcome".into()))?;
+    let service = answered_doc
+        .pointer("/signed_response/response/outcome/attestation_service")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    story.out.say(&format!(
+        "the origin-sealed class answers {} ({}): a sovereign attestation ABOUT the class substitutes for its contents (XB-2)",
+        outcome, service
+    ));
+
+    // The answer verifies under the custodian's published key, in the
+    // stranger's own hands — no trust in the serving side's word.
+    let signed_response: SignedS13Response = serde_json::from_value(
+        answered_doc
+            .get("signed_response")
+            .cloned()
+            .ok_or_else(|| story.abort("the answer carries no signed response".into()))?,
+    )
+    .map_err(|_| story.abort("the signed response does not parse".into()))?;
+    let custodian_key = PublicKey::from_bytes_in(
+        Suite::Ed25519,
+        &hex_bytes(&custodian_public_hex)
+            .map_err(|_| story.abort("the custodian key hex is unreadable".into()))?,
+    )
+    .map_err(|_| story.abort("the custodian key refuses to load".into()))?;
+    signed_response
+        .signature
+        .verify(
+            SigningDomain::S13Message,
+            &signed_response.response.canonical_bytes(),
+            &custodian_key,
+        )
+        .map_err(|_| {
+            story.abort("the custodian's answer does NOT verify — the wire is broken".into())
+        })?;
+    story.out.say("the custodian's signature verifies locally, over the canonical bytes, in the S13-MESSAGE domain");
+
+    // The journal replays from the envelopes alone (XB-6).
+    let journal = story.http_get(&base, "/s13/journal");
+    let journal = journal.ok_or_else(|| story.abort("the journal does not answer".into()))?;
+    let journal_doc: Value = serde_json::from_str(&journal.body)
+        .map_err(|_| story.abort("the journal is not JSON".into()))?;
+    let decisions = journal_doc
+        .get("decisions")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| story.abort("the journal carries no decisions".into()))?;
+    if decisions.is_empty() {
+        return Err(story.abort("the journal replayed to no decisions".into()));
+    }
+    story.out.say(&format!(
+        "the journal replays clean: {} messages, {} decisions in sequence",
+        journal_doc
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        decisions.len()
+    ));
+
+    // The authority counter-signs the answer's place (XB-7): a dispute
+    // is decided from the record — who answered, under which policy, at
+    // which point in the per-(subject, custodian) sequence.
+    let digest_hex = answered_doc
+        .get("request_digest")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| story.abort("the answer carries no request digest".into()))?
+        .to_string();
+    let countersigned = story.http_post(
+        &base,
+        "/s13/countersign",
+        &json!({ "request_digest": digest_hex }).to_string(),
+    );
+    let countersigned = countersigned
+        .ok_or_else(|| story.abort("the countersign endpoint does not answer".into()))?;
+    if countersigned.status != 201 {
+        return Err(story.abort(format!(
+            "the countersignature refused (HTTP {})",
+            countersigned.status
+        )));
+    }
+    let nr: NonRepudiableResponse = serde_json::from_str(&countersigned.body)
+        .map_err(|_| story.abort("the counter-signed answer does not parse".into()))?;
+    let authority_key = PublicKey::from_bytes_in(
+        Suite::Ed25519,
+        &hex_bytes(&authority_public_hex)
+            .map_err(|_| story.abort("the authority key hex is unreadable".into()))?,
+    )
+    .map_err(|_| story.abort("the authority key refuses to load".into()))?;
+    let mut payload = CanonicalWriter::new();
+    payload.write_bytes(&nr.signed.response.request_digest);
+    payload.write_bytes(&nr.sequence.to_le_bytes());
+    payload.write_bytes(nr.signed.response.governing_policy.as_bytes());
+    payload.write_bytes(&nr.signed.response.governing_policy_version.to_le_bytes());
+    nr.authority_signature
+        .verify(
+            SigningDomain::S13Message,
+            &payload.into_bytes(),
+            &authority_key,
+        )
+        .map_err(|_| story.abort("the authority's counter-signature does NOT verify".into()))?;
+    story.out.say(&format!(
+        "the authority counter-signs at sequence {}: who answered, under which policy, at which place — decided from the record",
+        nr.sequence
+    ));
+    story.out.what("the verifier's whole journey ran from the wire alone: register, ask, verify, replay, countersign — the dossier needs no call home (XB-8).");
+    Ok(Flow::Next)
+}
+
+fn hex_bytes(hex: &str) -> Result<Vec<u8>, ()> {
+    if hex.len() % 2 != 0 {
+        return Err(());
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| ()))
+        .collect()
+}
+
 pub const BEATS: &[(&str, BeatFn)] = &[
     ("B1", b1),
     ("B2", b2),
@@ -2371,4 +2622,5 @@ pub const BEATS: &[(&str, BeatFn)] = &[
     ("G-DEVICE", g_device),
     ("G-PRODUCT", g_product),
     ("B10", b10),
+    ("B-XB", b_xb),
 ];
