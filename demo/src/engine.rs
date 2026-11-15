@@ -364,6 +364,30 @@ pub enum Sink {
     File(PathBuf),
 }
 
+/// A demo run owns its services: the spawned children die with the
+/// story. A leaked listener serves yesterday's journal to tomorrow's
+/// run — the stale-binary lesson at process level.
+impl Drop for Story {
+    fn drop(&mut self) {
+        for child in [
+            self.registry.as_mut(),
+            self.server.as_mut(),
+            self.resolver.as_mut(),
+            self.gateway.as_mut(),
+            self.quorum.as_mut(),
+            self.issuer.as_mut(),
+            self.trust.as_mut(),
+            self.log.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 pub struct Story {
     pub cfg: Config,
     pub out: Out,

@@ -26,6 +26,7 @@ const BEAT_LABELS: &[&str] = &[
     "B8 — Resale and auction",
     "B9 — A recall crosses the graph",
     "B10 — End of life",
+    "B-XB — A border crossing: the foreign verifier asks, the custodian's POLICY answers",
 ];
 
 /// The live leg's four sibling services, in the shell's order (the
@@ -227,6 +228,11 @@ pub fn happy_path(h: &mut Harness) {
         "B10 scrap EoW degraded",
     );
     h.assert_grep(&plain, "B10 decomposed bike.*degraded", "B10 bike degraded");
+    h.assert_grep(
+        &plain,
+        "the authority counter-signs at sequence",
+        "B-XB counter-signed journey",
+    );
     h.assert_grep(&plain, "DEMO PASSED", "closing line");
 
     h.say(&format!("  artifacts under: {}/", e2e.display()));
