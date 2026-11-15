@@ -75,6 +75,10 @@ jobs:
           path: unidpp-config
       - uses: actions/checkout@v4
         with:
+          repository: unidpp/unidpp-server
+          path: unidpp-server
+      - uses: actions/checkout@v4
+        with:
           repository: unidpp/unidpp-projector
           path: unidpp-projector
       - uses: actions/checkout@v4
