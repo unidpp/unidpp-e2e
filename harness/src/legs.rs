@@ -1455,6 +1455,105 @@ pub fn family_contracts(h: &mut Harness) {
         }
     }
 
+    // 10. the resolution surface answers on the public estate: the
+    //     discovery document states the surface without exposing
+    //     identifiers, and the no-information 404s stay byte-identical
+    //     between two well-formed unregistered GTINs (I12). Offline is
+    //     a loud skip; anything else is a failure.
+    {
+        let mut wrong: Vec<String> = Vec::new();
+        let mut offline = false;
+        for host in ["app.unidpp.org", "registry-jp.unidpp.org"] {
+            match Command::new("curl")
+                .args([
+                    "-sf",
+                    "-m",
+                    "20",
+                    &format!("https://{host}/resolver/.well-known/unidpp-resolver"),
+                ])
+                .stderr(Stdio::null())
+                .output()
+            {
+                Ok(o) if o.status.success() => {
+                    let body = String::from_utf8_lossy(&o.stdout).into_owned();
+                    if !(body.contains("\"profile\"")
+                        && body.contains("enumerationResistance")
+                        && body.contains("identifierListing"))
+                    {
+                        wrong.push(format!(
+                            "{host} (the discovery document does not state the surface)"
+                        ));
+                    }
+                }
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(0);
+                    if matches!(code, 6 | 7 | 28) {
+                        offline = true;
+                    } else {
+                        wrong.push(format!(
+                            "{host} (the discovery GET failed, curl exit {code})"
+                        ));
+                    }
+                }
+                Err(_) => wrong.push(format!("{host} (curl could not run)")),
+            }
+        }
+        // I12: unknown and dark answer byte-identically (app host).
+        // Plain curl (no -f): the probes EXPECT the 404s.
+        let probe = |identifier: &str| {
+            Command::new("curl")
+                .args([
+                    "-s",
+                    "-m",
+                    "20",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code} %{size_download}",
+                    &format!("https://app.unidpp.org/resolver/resolve?identifier={identifier}"),
+                ])
+                .stderr(Stdio::null())
+                .output()
+        };
+        match (
+            probe("urn:unidpp:passport:drift-unknown-probe"),
+            probe("urn:unidpp:passport:drift-dark-probe"),
+        ) {
+            (Ok(a), Ok(b)) if a.status.success() && b.status.success() => {
+                let sa = String::from_utf8_lossy(&a.stdout).into_owned();
+                let sb = String::from_utf8_lossy(&b.stdout).into_owned();
+                if sa != sb {
+                    wrong.push(format!(
+                        "app.unidpp.org (unknown and dark drifted: {sa} vs {sb})"
+                    ));
+                }
+            }
+            (Ok(a), Ok(b)) => {
+                let ca = a.status.code().unwrap_or(0);
+                let cb = b.status.code().unwrap_or(0);
+                if matches!(ca, 6 | 7 | 28) || matches!(cb, 6 | 7 | 28) {
+                    offline = true;
+                } else {
+                    wrong.push(format!(
+                        "app.unidpp.org (the I12 probes failed, curl exits {ca}/{cb})"
+                    ));
+                }
+            }
+            _ => wrong.push("app.unidpp.org (curl could not run)".into()),
+        }
+        if offline && wrong.is_empty() {
+            h.say("  [SKIP] the resolution public surface: the network is unreachable from here");
+        } else if wrong.is_empty() {
+            h.say("  [ok]   the resolution public surface: the discovery document answers on both hosts, the no-information 404s stay byte-identical");
+            credits += 1;
+        } else {
+            h.fail_line(&format!(
+                "the resolution public surface drifted: {} (the estate's resolver needs repair)",
+                wrong.join("; ")
+            ));
+        }
+    }
+
     if credits > 0 {
         h.credit(credits);
     }
