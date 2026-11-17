@@ -1541,6 +1541,83 @@ pub fn family_contracts(h: &mut Harness) {
             }
             _ => wrong.push("app.unidpp.org (curl could not run)".into()),
         }
+        // The normalize surface: a Digital Link carrier translates to
+        // its canonical identifier, and the admin surface states its
+        // refusal (the edge carries no link store).
+        match Command::new("curl")
+            .args([
+                "-sf",
+                "-m",
+                "20",
+                "-X",
+                "POST",
+                "-H",
+                "content-type: application/json",
+                "-d",
+                "{\"carrier\":\"https://id.example.org/01/08712345000004\"}",
+                "https://app.unidpp.org/resolver/normalize",
+            ])
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let body = String::from_utf8_lossy(&o.stdout).into_owned();
+                if !(body.contains("gs1-digital-link-uri") && body.contains("01+08712345000004")) {
+                    wrong.push(
+                        "app.unidpp.org (the normalize surface answered outside its shape)".into(),
+                    );
+                }
+            }
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(0);
+                if matches!(code, 6 | 7 | 28) {
+                    offline = true;
+                } else {
+                    wrong.push(format!(
+                        "app.unidpp.org (the normalize POST failed, curl exit {code})"
+                    ));
+                }
+            }
+            Err(_) => wrong.push("app.unidpp.org (curl could not run)".into()),
+        }
+        match Command::new("curl")
+            .args([
+                "-s",
+                "-m",
+                "20",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-X",
+                "POST",
+                "-d",
+                "{}",
+                "https://app.unidpp.org/resolver/admin/revocations",
+            ])
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let code = String::from_utf8_lossy(&o.stdout).into_owned();
+                if code != "501" {
+                    wrong.push(format!(
+                        "app.unidpp.org (the admin refusal answered {code}, not a stated 501)"
+                    ));
+                }
+            }
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(0);
+                if matches!(code, 6 | 7 | 28) {
+                    offline = true;
+                } else {
+                    wrong.push(format!(
+                        "app.unidpp.org (the admin POST failed, curl exit {code})"
+                    ));
+                }
+            }
+            Err(_) => wrong.push("app.unidpp.org (curl could not run)".into()),
+        }
         if offline && wrong.is_empty() {
             h.say("  [SKIP] the resolution public surface: the network is unreachable from here");
         } else if wrong.is_empty() {
