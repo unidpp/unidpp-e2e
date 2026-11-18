@@ -1,4 +1,4 @@
-//! The twelve legs — one function per shell test, each check label and
+//! The thirteen legs — one function per shell test, each check label and
 //! count the contract (the ledger compares the summary). The demo legs
 //! drive the unidpp-demo binary (the port of demo.sh and demo-live.sh);
 //! the CLI, tenant, claims, and hub legs exercise the family directly;
@@ -1626,6 +1626,142 @@ pub fn family_contracts(h: &mut Harness) {
         } else {
             h.fail_line(&format!(
                 "the resolution public surface drifted: {} (the estate's resolver needs repair)",
+                wrong.join("; ")
+            ));
+        }
+    }
+
+    // 11. the served contract answers on the surface: every GET and
+    //     POST the union documents probed live on the edge; a
+    //     documented route answering the router fallback is the
+    //     silent mismatch the contract-vs-surface round hunted (the
+    //     estate serves what it documents, always). The paths section
+    //     parses by line shape (dependency-light: no YAML crate) —
+    //     the union builder emits paths last, path keys at two-space
+    //     indent, method keys at four. Templates take their probe
+    //     values: `{class}` takes a real class plural (the registry's
+    //     own enumeration), every other placeholder a probe token.
+    //     POST probes carry empty bodies (intake refusals state
+    //     themselves; an empty body creates nothing). Offline is a
+    //     loud skip; anything else is a failure.
+    {
+        fn probe_form(path: &str) -> String {
+            let mut out = String::new();
+            let mut rest = path;
+            while let Some(open) = rest.find('{') {
+                out.push_str(&rest[..open]);
+                let after = &rest[open..];
+                match after.find('}') {
+                    Some(close) => {
+                        let name = &after[1..close];
+                        out.push_str(if name == "class" {
+                            "data-elements"
+                        } else {
+                            "drift-probe"
+                        });
+                        rest = &after[close + 1..];
+                    }
+                    None => {
+                        out.push_str(after);
+                        rest = "";
+                    }
+                }
+            }
+            out.push_str(rest);
+            out
+        }
+
+        const FALLBACK: &str = r#"{"error":"no such path"}"#;
+        let mut wrong: Vec<String> = Vec::new();
+        let mut offline = false;
+        let mut probed = 0usize;
+        match Command::new("curl")
+            .args(["-sf", "-m", "30", "https://app.unidpp.org/openapi.yaml"])
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let union = String::from_utf8_lossy(&o.stdout).into_owned();
+                let mut ops: Vec<(String, &'static str)> = Vec::new();
+                let mut in_paths = false;
+                let mut current: Option<String> = None;
+                for line in union.lines() {
+                    if !in_paths {
+                        if line == "paths:" {
+                            in_paths = true;
+                        }
+                        continue;
+                    }
+                    if !line.starts_with(' ') {
+                        break;
+                    }
+                    if let Some(path) = line.strip_prefix("  /").and_then(|s| s.strip_suffix(':')) {
+                        current = Some(path.to_string());
+                    } else if line.starts_with("    get:") {
+                        if let Some(p) = &current {
+                            ops.push((p.clone(), "GET"));
+                        }
+                    } else if line.starts_with("    post:") {
+                        if let Some(p) = &current {
+                            ops.push((p.clone(), "POST"));
+                        }
+                    }
+                }
+                for (path, method) in &ops {
+                    let concrete = probe_form(&format!("/{path}"));
+                    let mut cmd = Command::new("curl");
+                    cmd.arg("-s").arg("-m").arg("15");
+                    if *method == "POST" {
+                        cmd.args([
+                            "-X",
+                            "POST",
+                            "-H",
+                            "content-type: application/json",
+                            "-d",
+                            "{}",
+                        ]);
+                    }
+                    cmd.arg(format!("https://app.unidpp.org{concrete}"))
+                        .stderr(Stdio::null());
+                    match cmd.output() {
+                        Ok(o) => {
+                            let code = o.status.code().unwrap_or(0);
+                            if matches!(code, 6 | 7 | 28) {
+                                offline = true;
+                                break;
+                            }
+                            probed += 1;
+                            let body = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            if body == FALLBACK {
+                                wrong.push(format!("{method} /{path}"));
+                            }
+                        }
+                        Err(_) => wrong.push(format!("{method} /{path} (curl could not run)")),
+                    }
+                }
+            }
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(0);
+                if !matches!(code, 6 | 7 | 28) {
+                    wrong.push(format!(
+                        "app.unidpp.org (the union document failed to fetch, curl exit {code})"
+                    ));
+                } else {
+                    offline = true;
+                }
+            }
+            Err(_) => wrong.push("app.unidpp.org (curl could not run)".into()),
+        }
+        if offline && wrong.is_empty() {
+            h.say("  [SKIP] the served contract answers on the surface: the network is unreachable from here");
+        } else if wrong.is_empty() {
+            h.say(&format!(
+                "  [ok]   the served contract answers on the surface: all {probed} documented operations reach a real handler"
+            ));
+            credits += 1;
+        } else {
+            h.fail_line(&format!(
+                "the served contract drifted from the surface: {} (a documented route answering the fallback is a silent mismatch)",
                 wrong.join("; ")
             ));
         }
