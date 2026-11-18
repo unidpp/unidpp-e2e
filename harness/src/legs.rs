@@ -1642,8 +1642,12 @@ pub fn family_contracts(h: &mut Harness) {
     //     values: `{class}` takes a real class plural (the registry's
     //     own enumeration), every other placeholder a probe token.
     //     POST probes carry empty bodies (intake refusals state
-    //     themselves; an empty body creates nothing). Offline is a
-    //     loud skip; anything else is a failure.
+    //     themselves; an empty body creates nothing) — with the one
+    //     stated exception below: the registry's seed route is never
+    //     POSTed, because on a dev-posture deployment an empty seed
+    //     body seeds the corpus, and a watch does not write to the
+    //     estate it watches. Offline is a loud skip; anything else is
+    //     a failure.
     {
         fn probe_form(path: &str) -> String {
             let mut out = String::new();
@@ -1708,6 +1712,16 @@ pub fn family_contracts(h: &mut Harness) {
                     }
                 }
                 for (path, method) in &ops {
+                    // The one mutating exception: on a deployment in
+                    // dev mode (open mutations, the reference
+                    // posture) the seed route answers an empty body
+                    // by seeding the corpus — a probe would write
+                    // state to the live estate. Its GET sibling
+                    // (/registry/admin/log) is probed; the seed POST
+                    // is stated, not sent.
+                    if *method == "POST" && path == "registry/admin/seed" {
+                        continue;
+                    }
                     let concrete = probe_form(&format!("/{path}"));
                     let mut cmd = Command::new("curl");
                     cmd.arg("-s").arg("-m").arg("15");
