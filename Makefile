@@ -10,7 +10,7 @@ demo: deps deps-trust deps-resolver ## Walk the ten STORY.md beats end to end.
 demo-live: deps-live        ## Walk B1-B10 against the four LIVE sibling services.
 	cargo run --release --manifest-path demo/Cargo.toml --bin unidpp-demo -- demo live
 
-test:                       ## Run the family harness (the thirteen legs, 89 checks).
+test:                       ## Run the family harness (the thirteen legs, 90 checks).
 	cargo run --release --manifest-path harness/Cargo.toml --bin unidpp-harness
 
 deps-resolver:              ## Build the resolver (its release binary goes stale silently otherwise).

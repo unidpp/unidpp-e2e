@@ -1781,6 +1781,70 @@ pub fn family_contracts(h: &mut Harness) {
         }
     }
 
+    // 12. the trust surface signs what it answers: a served GET
+    //     carries the signature headers the discovery document states
+    //     (x-sig-domain, x-sig-ed25519, the key id, the etag derived
+    //     from the signature) — the header posture the contract
+    //     round shipped, watched so it does not rot offline. Offline
+    //     is a loud skip; anything else is a failure.
+    {
+        let mut wrong: Vec<String> = Vec::new();
+        let mut offline = false;
+        match Command::new("curl")
+            .args([
+                "-s",
+                "-m",
+                "20",
+                "-D",
+                "-",
+                "-o",
+                "/dev/null",
+                "https://app.unidpp.org/trust/master-list",
+            ])
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let headers = String::from_utf8_lossy(&o.stdout).to_lowercase();
+                for required in [
+                    "x-sig-domain: tree-head",
+                    "x-sig-ed25519:",
+                    "x-sig-key-id-ed25519: k-",
+                    "etag: \"sig-",
+                ] {
+                    if !headers.contains(required) {
+                        wrong.push(format!(
+                            "app.unidpp.org (the signed response lacks `{}`)",
+                            required.trim_end_matches(':')
+                        ));
+                    }
+                }
+            }
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(0);
+                if matches!(code, 6 | 7 | 28) {
+                    offline = true;
+                } else {
+                    wrong.push(format!(
+                        "app.unidpp.org (the signed GET failed, curl exit {code})"
+                    ));
+                }
+            }
+            Err(_) => wrong.push("app.unidpp.org (curl could not run)".into()),
+        }
+        if offline && wrong.is_empty() {
+            h.say("  [SKIP] the trust surface signs what it answers: the network is unreachable from here");
+        } else if wrong.is_empty() {
+            h.say("  [ok]   the trust surface signs what it answers: the signature headers ride the served responses");
+            credits += 1;
+        } else {
+            h.fail_line(&format!(
+                "the trust signing posture drifted: {} (a stated signature header the deployment does not serve is a silent mismatch)",
+                wrong.join("; ")
+            ));
+        }
+    }
+
     if credits > 0 {
         h.credit(credits);
     }
