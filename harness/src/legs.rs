@@ -1711,6 +1711,39 @@ pub fn family_contracts(h: &mut Harness) {
                         }
                     }
                 }
+                // The frozen no-information bytes (I12): the issuer
+                // pins its unknown-passport 404 as a constant, and
+                // every unknown-passport route answers it byte-exactly
+                // — the form the 310 round restored on the edge.
+                match Command::new("curl")
+                    .args([
+                        "-s",
+                        "-m",
+                        "15",
+                        "https://app.unidpp.org/issuer/passports/drift-probe-frozen",
+                    ])
+                    .stderr(Stdio::null())
+                    .output()
+                {
+                    Ok(o) => {
+                        let code = o.status.code().unwrap_or(0);
+                        if matches!(code, 6 | 7 | 28) {
+                            offline = true;
+                        } else if String::from_utf8_lossy(&o.stdout).trim()
+                            != r#"{"error":"not found"}"#
+                        {
+                            wrong.push(
+                                "GET /issuer/passports/{unknown} (the no-information 404 drifted from the frozen bytes)"
+                                    .into(),
+                            );
+                        } else {
+                            probed += 1;
+                        }
+                    }
+                    Err(_) => {
+                        wrong.push("GET /issuer/passports/{unknown} (curl could not run)".into())
+                    }
+                }
                 for (path, method) in &ops {
                     // The one mutating exception: on a deployment in
                     // dev mode (open mutations, the reference
