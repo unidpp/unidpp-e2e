@@ -1324,12 +1324,56 @@ pub fn family_contracts(h: &mut Harness) {
             }
             Err(_) => wrong.push("registry.unidpp.org/trust (curl could not run)".into()),
         }
+        // The dedicated hub worker (262's deployment): its own
+        // contract, the family's hub golden byte-identical, the title
+        // naming the hub. The golden reads from the service checkout
+        // (the same file the one-binary embeds); absent checkout, the
+        // title pins alone.
+        let hub_golden = h.family.join("unidpp-hub/openapi.yaml");
+        let committed_hub = if hub_golden.is_file() {
+            Some(std::fs::read_to_string(&hub_golden).unwrap_or_default())
+        } else {
+            None
+        };
+        match Command::new("curl")
+            .args([
+                "-sf",
+                "-m",
+                "20",
+                "https://hub.unidpp.org/openapi.yaml",
+            ])
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let served = String::from_utf8_lossy(&o.stdout).into_owned();
+                if !served.contains("title: UniDPP hub") {
+                    wrong.push("hub.unidpp.org (the contract does not name `UniDPP hub`)".into());
+                } else if let Some(committed) = &committed_hub {
+                    if &served != committed {
+                        wrong.push(
+                            "hub.unidpp.org (the served contract differs from the family's hub golden)"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(0);
+                if matches!(code, 6 | 7 | 28) {
+                    offline = true;
+                } else {
+                    wrong.push(format!("hub.unidpp.org (HTTP path failed, curl exit {code})"));
+                }
+            }
+            Err(_) => wrong.push("hub.unidpp.org (curl could not run)".into()),
+        }
         if offline && wrong.is_empty() {
             h.say("  [SKIP] public truth surfaces: the network is unreachable from here");
         } else if wrong.is_empty() {
             h.say(&format!(
-                "  [ok]   public truth surfaces: {} hostnames serve the one deployment's contract, modules at their prefixes",
-                publics.len()
+                "  [ok]   public truth surfaces: {} hostnames serve the one deployment's contract, the hub its own golden, modules at their prefixes",
+                publics.len() + 1
             ));
             credits += 1;
         } else {
