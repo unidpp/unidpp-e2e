@@ -1788,6 +1788,50 @@ pub fn family_contracts(h: &mut Harness) {
                         wrong.push("GET /issuer/passports/{unknown} (curl could not run)".into())
                     }
                 }
+                // The import direction serves: the contract documents
+                // POST /render/untp/ingest, and the render module's
+                // own route-404 is not the union's fallback body — a
+                // missing handler used to defeat the fallback-body
+                // probe. The probe imports a probe-only GS1 identity
+                // (idempotent per isolate) and demands a real outcome
+                // (imported or matched), never the route-404.
+                match Command::new("curl")
+                    .args([
+                        "-s",
+                        "-m",
+                        "15",
+                        "-X",
+                        "POST",
+                        "-H",
+                        "content-type: application/json",
+                        "-d",
+                        r#"{"passport":{"productIdentifiers":[{"scheme":"https://gs1.org/voc/","value":"04012345999990"}]}}"#,
+                        "https://app.unidpp.org/render/untp/ingest",
+                    ])
+                    .stderr(Stdio::null())
+                    .output()
+                {
+                    Ok(o) => {
+                        let code = o.status.code().unwrap_or(0);
+                        if matches!(code, 6 | 7 | 28) {
+                            offline = true;
+                        } else {
+                            let body = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            let status_ok = body.contains(r#""status":"imported""#)
+                                || body.contains(r#""status":"matched""#);
+                            if !status_ok {
+                                wrong.push(
+                                    "POST /render/untp/ingest (the documented import direction does not reach the ingest handler)".into(),
+                                );
+                            } else {
+                                probed += 1;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        wrong.push("POST /render/untp/ingest (curl could not run)".into())
+                    }
+                }
                 for (path, method) in &ops {
                     // The one mutating exception: on a deployment in
                     // dev mode (open mutations, the reference
