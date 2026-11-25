@@ -1844,24 +1844,35 @@ pub fn family_contracts(h: &mut Harness) {
                         "-s",
                         "-m",
                         "15",
+                        "-w",
+                        "\n%{http_code}",
                         "https://app.unidpp.org/render/untp/nonexistent",
                     ])
                     .stderr(Stdio::null())
                     .output()
                 {
                     Ok(o) => {
-                        let code = o.status.code().unwrap_or(0);
-                        if matches!(code, 6 | 7 | 28) {
+                        let exit = o.status.code().unwrap_or(0);
+                        if matches!(exit, 6 | 7 | 28) {
                             offline = true;
-                        } else if o.status.code() != Some(404)
-                            || !String::from_utf8_lossy(&o.stdout).is_empty()
-                        {
-                            wrong.push(
-                                "GET /render/untp/{unknown-path} (the router fallback drifted from the native's empty 404)"
-                                    .into(),
-                            );
                         } else {
-                            probed += 1;
+                            // The write-out rides after the body behind
+                            // a final newline (curl's exit code is 0
+                            // for HTTP errors without -f — the HTTP
+                            // status must come from %{http_code}).
+                            let out = String::from_utf8_lossy(&o.stdout).into_owned();
+                            let (body, code) = match out.rsplit_once('\n') {
+                                Some((b, c)) => (b.to_string(), c.to_string()),
+                                None => (out.clone(), String::new()),
+                            };
+                            if code != "404" || !body.is_empty() {
+                                wrong.push(
+                                    "GET /render/untp/{unknown-path} (the router fallback drifted from the native's empty 404)"
+                                        .into(),
+                                );
+                            } else {
+                                probed += 1;
+                            }
                         }
                     }
                     Err(_) => {
