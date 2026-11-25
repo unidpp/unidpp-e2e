@@ -1832,6 +1832,42 @@ pub fn family_contracts(h: &mut Harness) {
                         wrong.push("POST /render/untp/ingest (curl could not run)".into())
                     }
                 }
+                // The router fallback's form: the native gateway and
+                // projector mount no custom fallback, so unknown
+                // module paths answer the axum default — an empty 404
+                // with no body and no content-type. The render
+                // module's own JSON body used to diverge (and the
+                // divergence used to defeat the fallback-body probe,
+                // which is how the missing ingest handler hid).
+                match Command::new("curl")
+                    .args([
+                        "-s",
+                        "-m",
+                        "15",
+                        "https://app.unidpp.org/render/untp/nonexistent",
+                    ])
+                    .stderr(Stdio::null())
+                    .output()
+                {
+                    Ok(o) => {
+                        let code = o.status.code().unwrap_or(0);
+                        if matches!(code, 6 | 7 | 28) {
+                            offline = true;
+                        } else if o.status.code() != Some(404)
+                            || !String::from_utf8_lossy(&o.stdout).is_empty()
+                        {
+                            wrong.push(
+                                "GET /render/untp/{unknown-path} (the router fallback drifted from the native's empty 404)"
+                                    .into(),
+                            );
+                        } else {
+                            probed += 1;
+                        }
+                    }
+                    Err(_) => {
+                        wrong.push("GET /render/untp/{unknown-path} (curl could not run)".into())
+                    }
+                }
                 for (path, method) in &ops {
                     // The one mutating exception: on a deployment in
                     // dev mode (open mutations, the reference
