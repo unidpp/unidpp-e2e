@@ -1953,52 +1953,51 @@ pub fn family_contracts(h: &mut Harness) {
     //     carries the signature headers the discovery document states
     //     (x-sig-domain, x-sig-ed25519, the key id, the etag derived
     //     from the signature) — the header posture the contract
-    //     round shipped, watched so it does not rot offline. Offline
-    //     is a loud skip; anything else is a failure.
+    //     round shipped, watched so it does not rot offline. The
+    //     health probe rides the same posture (the native trust
+    //     signs its healthz like every answer). Offline is a loud
+    //     skip; anything else is a failure.
     {
         let mut wrong: Vec<String> = Vec::new();
         let mut offline = false;
-        match Command::new("curl")
-            .args([
-                "-s",
-                "-m",
-                "20",
-                "-D",
-                "-",
-                "-o",
-                "/dev/null",
-                "https://app.unidpp.org/trust/master-list",
-            ])
-            .stderr(Stdio::null())
-            .output()
-        {
-            Ok(o) if o.status.success() => {
-                let headers = String::from_utf8_lossy(&o.stdout).to_lowercase();
-                for required in [
-                    "x-sig-domain: tree-head",
-                    "x-sig-ed25519:",
-                    "x-sig-key-id-ed25519: k-",
-                    "etag: \"sig-",
-                ] {
-                    if !headers.contains(required) {
+        for url in [
+            "https://app.unidpp.org/trust/master-list",
+            "https://app.unidpp.org/trust/healthz",
+        ] {
+            match Command::new("curl")
+                .args(["-s", "-m", "20", "-D", "-", "-o", "/dev/null", url])
+                .stderr(Stdio::null())
+                .output()
+            {
+                Ok(o) if o.status.success() => {
+                    let headers = String::from_utf8_lossy(&o.stdout).to_lowercase();
+                    for required in [
+                        "x-sig-domain: tree-head",
+                        "x-sig-ed25519:",
+                        "x-sig-key-id-ed25519: k-",
+                        "etag: \"sig-",
+                    ] {
+                        if !headers.contains(required) {
+                            wrong.push(format!(
+                                "{} (the signed response lacks `{}`)",
+                                url,
+                                required.trim_end_matches(':')
+                            ));
+                        }
+                    }
+                }
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(0);
+                    if matches!(code, 6 | 7 | 28) {
+                        offline = true;
+                    } else {
                         wrong.push(format!(
-                            "app.unidpp.org (the signed response lacks `{}`)",
-                            required.trim_end_matches(':')
+                            "{url} (the signed GET failed, curl exit {code})"
                         ));
                     }
                 }
+                Err(_) => wrong.push(format!("{url} (curl could not run)")),
             }
-            Ok(o) => {
-                let code = o.status.code().unwrap_or(0);
-                if matches!(code, 6 | 7 | 28) {
-                    offline = true;
-                } else {
-                    wrong.push(format!(
-                        "app.unidpp.org (the signed GET failed, curl exit {code})"
-                    ));
-                }
-            }
-            Err(_) => wrong.push("app.unidpp.org (curl could not run)".into()),
         }
         if offline && wrong.is_empty() {
             h.say("  [SKIP] the trust surface signs what it answers: the network is unreachable from here");
